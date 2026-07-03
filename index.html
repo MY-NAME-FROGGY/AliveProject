@@ -4,7 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ОСТАТЬСЯ В ЖИВЫХ</title>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap');
 :root{--void:#15170f;--void-2:#1d2016;--paper:#e9e3d0;--ink:#211d13;--hazard:#d3a026;--danger:#a63d2f;--moss:#5b6b48;}
@@ -22,10 +21,28 @@ h1,h2,h3{font-family:'Oswald',sans-serif;text-transform:uppercase;letter-spacing
 </style>
 </head>
 <body>
-<div class="wrap" id="app"></div>
+<div class="wrap" id="app">Загрузка игры...</div>
 
 <script>
-// === ОСНОВНЫЕ ДАННЫЕ ИГРЫ ===
+// ==========================================
+// НАСТРОЙКИ ПОДКЛЮЧЕНИЯ К ТВОЕЙ БАЗЕ ДАННЫХ:
+// ==========================================
+const SUPABASE_URL = 'https://dhuqvintfsmbigmvdvak.supabase.co';
+
+// Аккуратно вставь свой длинный anon/public ключ между одинарными кавычками:
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRodXF2aW50ZnNtYmlnbXZkdmFrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMwODAxODQsImV4cCI6MjA5ODY1NjE4NH0.badg8idLoAL-Y4sxR7zj9NTHdyKrBdh_Cv90fimAD-4';
+// ==========================================
+
+let supabase = null;
+
+// Безопасная генерация ID игрока
+function generateSafeId() {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  return 'usr_' + Math.random().toString(36).substring(2, 15);
+}
+
 const TRAITS = {
   profession: ["Врач", "Инженер", "Военный", "Учитель", "Фермер", "Механик"],
   age: ["25 лет", "34 года", "47 лет", "61 год"],
@@ -34,20 +51,32 @@ const TRAITS = {
 };
 
 let state = {
-  playerId: crypto.randomUUID(),
+  playerId: generateSafeId(),
   playerName: '',
   code: null,
   room: null,
   pollInterval: null
 };
 
-// ==========================================
-// ВСТАВЬ СВОИ ДАННЫЕ ОТ SUPABASE ВОТ СЮДА:
-// ==========================================
-const SUPABASE_URL = 'https://dhuqvintfsmbigmvdvak.supabase.co';
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRodXF2aW50ZnNtYmlnbXZkdmFrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMwODAxODQsImV4cCI6MjA5ODY1NjE4NH0.badg8idLoAL-Y4sxR7zj9NTHdyKrBdh_Cv90fimAD-4';
-const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-// ==========================================
+// Функция умной загрузки библиотеки Supabase (защита от зависания серверов)
+function loadSupabaseScript() {
+  return new Promise((resolve) => {
+    if (window.supabase) return resolve(true);
+    const script = document.createElement('script');
+    // Пробуем первый независимый сервер (unpkg)
+    script.src = 'https://unpkg.com/@supabase/supabase-js@2';
+    script.onload = () => resolve(true);
+    script.onerror = () => {
+      // Если он недоступен, пробуем запасной сервер (jsdelivr)
+      const script2 = document.createElement('script');
+      script2.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2';
+      script2.onload = () => resolve(true);
+      script2.onerror = () => resolve(false);
+      document.head.appendChild(script2);
+    };
+    document.head.appendChild(script);
+  });
+}
 
 function genCode() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -55,34 +84,39 @@ function genCode() {
   return c;
 }
 
-// Новая функция сохранения в базу данных
 async function saveRoom(room) {
-  const { data, error } = await supabase
-    .from('rooms')
-    .upsert({ code: room.code, data: room });
-  
-  if (!error) {
-    state.room = room;
-    render();
-  } else {
-    console.error("Ошибка сохранения:", error);
-    alert('Произошла ошибка при сохранении данных в базу.');
+  if (!supabase) return alert('База данных не подключена! Проверьте ключи в коде.');
+  try {
+    const { data, error } = await supabase
+      .from('rooms')
+      .upsert({ code: room.code, data: room });
+    
+    if (!error) {
+      state.room = room;
+      render();
+    } else {
+      alert('Ошибка базы данных: ' + error.message);
+    }
+  } catch (e) {
+    alert('Не удалось отправить данные: ' + e.message);
   }
 }
 
-// Новая функция загрузки из базы данных
 async function getRoom(code) {
-  const { data, error } = await supabase
-    .from('rooms')
-    .select('data')
-    .eq('code', code)
-    .single();
-    
-  if (data) return data.data;
+  if (!supabase) return null;
+  try {
+    const { data, error } = await supabase
+      .from('rooms')
+      .select('data')
+      .eq('code', code)
+      .single();
+    if (data) return data.data;
+  } catch(e) {
+    console.error(e);
+  }
   return null;
 }
 
-// Запуск автоматического обновления (чтобы видеть заходящих игроков)
 function startPolling() {
   if (state.pollInterval) clearInterval(state.pollInterval);
   state.pollInterval = setInterval(async () => {
@@ -93,7 +127,7 @@ function startPolling() {
         render();
       }
     }
-  }, 2000); // Обновление каждые 2 секунды
+  }, 2000);
 }
 
 function stopPolling() {
@@ -104,14 +138,25 @@ function stopPolling() {
 }
 
 function render() {
-  document.getElementById('app').innerHTML = state.room ? renderRoom(state.room) : renderHome();
+  const appDiv = document.getElementById('app');
+  if (appDiv) {
+    appDiv.innerHTML = state.room ? renderRoom(state.room) : renderHome();
+  }
 }
 
-// Главное меню
 function renderHome() {
+  let warning = '';
+  if (!supabase) {
+    warning = `<div style="background:var(--danger); padding:14px; border-radius:4px; margin-bottom:15px; color:white; font-size:13px; border-left:5px solid #ff4a4a; line-height:1.4;">
+      ⚠️ ИГРА РАБОТАЕТ В ОФЛАЙН-РЕЖИМЕ (БАЗА НЕ ПОДКЛЮЧЕНА)<br>
+      • Убедитесь, что вы заменили текст 'СЮДА_ВСТАВЬ...' на ваш реальный длинный ключ (начинается на eyJ).<br>
+      • Проверьте подключение к интернету.
+    </div>`;
+  }
   return `
     <div class="brand"><h1>ОСТАТЬСЯ <span>В ЖИВЫХ</span></h1></div>
     <div class="hazard-strip"></div>
+    ${warning}
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
       <div class="panel">
         <h2>Создать комнату</h2>
@@ -185,7 +230,7 @@ async function actionStartGame() {
       };
     });
     await saveRoom(state.room);
-    alert('Игра началась! Сейчас идёт фаза раскрытия характеристик.');
+    alert('Игра началась!');
   }
 }
 
@@ -198,7 +243,29 @@ function actionLeaveRoom() {
   }
 }
 
-render();
+// Главная управляющая функция
+async function main() {
+  // 1. Рисуем меню МГНОВЕННО, не дожидаясь загрузок
+  render();
+  
+  // 2. Если ключ не вставлен, остаемся в режиме предупреждения
+  if (!SUPABASE_KEY || SUPABASE_KEY.includes('СЮДА_ВСТАВЬ')) {
+    return;
+  }
+  
+  // 3. Скачиваем библиотеку Supabase в фоновом режиме
+  const loaded = await loadSupabaseScript();
+  if (loaded && window.supabase) {
+    try {
+      supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+      render(); // Перерисовываем меню (красная плашка пропадет, если всё ок)
+    } catch(e) {
+      console.error("Ошибка инициализации Supabase:", e);
+    }
+  }
+}
+
+main();
 </script>
 </body>
 </html>
