@@ -6,16 +6,12 @@
 <title>ОСТАТЬСЯ В ЖИВЫХ</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap');
-:root{
-  --void:#15170f; --void-2:#1d2016; --paper:#e9e3d0; --ink:#211d13;
-  --hazard:#d3a026; --danger:#a63d2f; --moss:#5b6b48;
-}
+:root{--void:#15170f;--void-2:#1d2016;--paper:#e9e3d0;--ink:#211d13;--hazard:#d3a026;--danger:#a63d2f;--moss:#5b6b48;}
 *{box-sizing:border-box;}
 body{margin:0;background:radial-gradient(ellipse at top,#1f2317 0%,var(--void) 60%);color:var(--paper);font-family:'IBM Plex Mono',monospace;min-height:100vh;padding:24px 16px 60px;}
 h1,h2,h3{font-family:'Oswald',sans-serif;text-transform:uppercase;letter-spacing:0.04em;margin:0;}
 .wrap{max-width:920px;margin:0 auto;}
 .hazard-strip{height:10px;background:repeating-linear-gradient(135deg,var(--hazard) 0 18px,#211d13 18px 36px);border-radius:2px;margin:14px 0 22px;}
-.brand{display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:10px;}
 .panel{background:var(--void-2);border:1px solid #33361f;border-radius:6px;padding:20px;margin-bottom:16px;}
 .btn{display:inline-block;font-family:'Oswald',sans-serif;text-transform:uppercase;letter-spacing:0.05em;font-size:13px;font-weight:600;padding:11px 18px;border-radius:4px;border:none;cursor:pointer;}
 .btn-primary{background:var(--hazard);color:#211d13;}
@@ -28,7 +24,14 @@ h1,h2,h3{font-family:'Oswald',sans-serif;text-transform:uppercase;letter-spacing
 <div class="wrap" id="app"></div>
 
 <script>
-const STORAGE_PREFIX = 'ostatsya_';
+// === ОСНОВНЫЕ ДАННЫЕ ===
+const TRAITS = {
+  profession: ["Врач", "Инженер", "Военный", "Учитель", "Фермер", "Механик"],
+  age: ["25 лет", "34 года", "47 лет", "61 год"],
+  health: ["Здоров", "Хромает", "Аллергия", "Слабое сердце"],
+  hobby: ["Стрелок", "Медик", "Механик", "Повар"]
+};
+
 let state = {
   playerId: crypto.randomUUID(),
   playerName: '',
@@ -43,14 +46,14 @@ function genCode() {
 }
 
 function saveRoom(room) {
-  localStorage.setItem(STORAGE_PREFIX + 'room_' + room.code, JSON.stringify(room));
+  localStorage.setItem('ostatsya_room_' + room.code, JSON.stringify(room));
   state.room = room;
   render();
 }
 
 function getRoom(code) {
   try {
-    const data = localStorage.getItem(STORAGE_PREFIX + 'room_' + code);
+    const data = localStorage.getItem('ostatsya_room_' + code);
     return data ? JSON.parse(data) : null;
   } catch(e) { return null; }
 }
@@ -59,6 +62,7 @@ function render() {
   document.getElementById('app').innerHTML = state.room ? renderRoom(state.room) : renderHome();
 }
 
+// Главное меню
 function renderHome() {
   return `
     <div class="brand"><h1>ОСТАТЬСЯ <span>В ЖИВЫХ</span></h1></div>
@@ -67,7 +71,7 @@ function renderHome() {
       <div class="panel">
         <h2>Создать комнату</h2>
         <input id="hostName" placeholder="Твоё имя" style="width:100%;padding:12px;margin:10px 0;">
-        <button class="btn btn-primary" onclick="createRoom()">Создать комнату</button>
+        <button class="btn btn-primary" onclick="createRoom()">Создать</button>
       </div>
       <div class="panel">
         <h2>Присоединиться</h2>
@@ -81,33 +85,28 @@ function renderHome() {
 
 function renderRoom(room) {
   const isHost = room.hostId === state.playerId;
-  return `
+  let html = `
     <div class="brand"><h1>ОСТАТЬСЯ <span>В ЖИВЫХ</span></h1><span class="sub">КОД: ${room.code}</span></div>
     <div class="hazard-strip"></div>
     <div class="panel">
       <div class="code-box">${room.code}</div>
       <h2>Участники (${room.players.length})</h2>
-      <ul style="list-style:none;padding:0;">${room.players.map(p => `<li style="padding:10px;background:#1d2016;margin:5px 0;border-radius:4px;">${p.name} ${isHost && p.id === room.hostId ? '(Ведущий)' : ''}</li>`).join('')}</ul>
+      <ul style="list-style:none;padding:0;">${room.players.map(p => `<li style="padding:10px;background:#1d2016;margin:5px 0;">${p.name}</li>`).join('')}</ul>
     </div>
-    ${isHost ? `
-      <div class="panel">
-        <button class="btn btn-primary" onclick="startGame()">Начать игру</button>
-      </div>
-    ` : ''}
-    <button class="btn btn-ghost" onclick="leaveRoom()">← В главное меню</button>
   `;
+
+  if (isHost) {
+    html += `<button class="btn btn-primary" onclick="startGame()">Начать игру</button>`;
+  }
+  html += `<button class="btn btn-ghost" onclick="leaveRoom()" style="margin-top:10px;">← В главное меню</button>`;
+  return html;
 }
 
 function createRoom() {
   const name = document.getElementById('hostName').value.trim();
   if (!name) return alert('Введите имя!');
   const code = genCode();
-  const room = {
-    code, 
-    hostId: state.playerId, 
-    phase: 'lobby', 
-    players: [{id: state.playerId, name}]
-  };
+  const room = { code, hostId: state.playerId, phase: 'lobby', players: [{id: state.playerId, name, traits: {}}] };
   state.playerName = name;
   state.code = code;
   saveRoom(room);
@@ -116,10 +115,10 @@ function createRoom() {
 function joinRoom() {
   const code = document.getElementById('joinCode').value.trim().toUpperCase();
   const name = document.getElementById('joinName').value.trim();
-  if (!code || !name) return alert('Заполните все поля!');
+  if (!code || !name) return alert('Заполните поля!');
   let room = getRoom(code);
   if (!room) return alert('Комната не найдена!');
-  room.players.push({id: state.playerId, name});
+  room.players.push({id: state.playerId, name, traits: {}});
   state.playerName = name;
   state.code = code;
   saveRoom(room);
@@ -127,14 +126,21 @@ function joinRoom() {
 
 function startGame() {
   if (state.room) {
-    state.room.phase = 'intro';
+    state.room.phase = 'game';
+    // Генерируем черты
+    state.room.players.forEach(p => {
+      p.traits = {
+        profession: TRAITS.profession[Math.floor(Math.random()*TRAITS.profession.length)],
+        age: TRAITS.age[Math.floor(Math.random()*TRAITS.age.length)]
+      };
+    });
     saveRoom(state.room);
-    alert('Игра началась! Катастрофа и характеристики будут в следующей версии.');
+    alert('Игра началась! Сейчас идёт фаза раскрытия характеристик (пока упрощённо).');
   }
 }
 
 function leaveRoom() {
-  if (confirm('Выйти из комнаты?')) {
+  if (confirm('Выйти?')) {
     state.room = null;
     state.code = null;
     render();
