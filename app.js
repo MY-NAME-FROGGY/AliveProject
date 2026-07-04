@@ -91,7 +91,7 @@ function genCode() {
 
 function defaultSettings() {
     return {
-        min_players: 4,
+        min_players: 2,
         max_players: 12,
         target_survivors: 3,
         rounds: 6,
