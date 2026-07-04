@@ -44,7 +44,9 @@ const state = {
     catalog: [],
     viewingScenario: null,      // { scenario, base:[], bonus:[] }
     pollInterval: null,
-    countdownTick: null
+    countdownTick: null,
+    lastSeenSettings: null,
+    lastSeenScenarioId: undefined
 };
 localStorage.setItem('playerId', state.playerId);
 
@@ -77,7 +79,12 @@ function defaultSettings() {
 }
 
 async function dbCreateRoom(hostName) {
-    const code = genCode();
+    let code = genCode();
+    for (let attempt = 0; attempt < 5; attempt++) {
+        const { data: existing } = await supabaseClient.from('rooms').select('code').eq('code', code).maybeSingle();
+        if (!existing) break;
+        code = genCode();
+    }
     const { error: roomErr } = await supabaseClient.from('rooms').insert({
         code, host_id: state.playerId, phase: 'lobby', settings: defaultSettings()
     });
@@ -173,6 +180,93 @@ async function dbFetchScenarioDetail(id) {
 }
 
 // ==========================================
+// ГЕНЕРАЦИЯ КАРТОЧЕК ПЕРСОНАЖЕЙ (Шаг 4)
+// ==========================================
+function shuffleArray(arr) {
+    const a = arr.slice();
+    for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+}
+
+// Собирает одну карточку: по одной записи на каждую из 10 категорий,
+// с балансом ~половина категорий "в плюс", половина "в минус" (value от -2 до +2).
+function generateBalancedCard(pool) {
+    const categories = shuffleArray(CATEGORY_LIST);
+    const half = Math.ceil(categories.length / 2);
+    const positiveCats = new Set(categories.slice(0, half));
+    const card = [];
+    for (const cat of CATEGORY_LIST) {
+        const items = pool.filter(p => p.category === cat);
+        if (items.length === 0) {
+            console.warn('В character_pool нет записей для категории:', cat);
+            continue;
+        }
+        const wantPositive = positiveCats.has(cat);
+        let candidates = items.filter(p => wantPositive ? p.value >= 0 : p.value <= 0);
+        if (candidates.length === 0) candidates = items; // фолбэк на неполном тестовом наборе
+        const pick = candidates[Math.floor(Math.random() * candidates.length)];
+        card.push({ category: cat, pool_id: pick.id, text: pick.text, value: pick.value });
+    }
+    return card;
+}
+
+async function dbFetchCharacterPool() {
+    const { data, error } = await supabaseClient.from('character_pool').select('id,category,text,value');
+    if (error) { console.error('Ошибка загрузки character_pool:', error); return []; }
+    return data || [];
+}
+
+async function dbCardsExist(roomCode) {
+    const { data, error } = await supabaseClient.from('player_cards').select('id').eq('room_code', roomCode).limit(1);
+    if (error) { console.error(error); return false; }
+    return !!(data && data.length > 0);
+}
+
+async function dbInsertPlayerCard(roomCode, playerId, card) {
+    const rows = card.map(c => ({
+        room_code: roomCode,
+        player_id: playerId,
+        category: c.category,
+        pool_id: c.pool_id,
+        text: c.text,
+        value: c.value,
+        revealed: false
+    }));
+    const { error } = await supabaseClient.from('player_cards').insert(rows);
+    if (error) console.error('Ошибка записи карточки для игрока ' + playerId + ':', error);
+}
+
+async function dbFetchMyCard(roomCode, playerId) {
+    const { data, error } = await supabaseClient.from('player_cards')
+        .select('*').eq('room_code', roomCode).eq('player_id', playerId);
+    if (error) { console.error(error); return []; }
+    return data || [];
+}
+
+async function dbClearCards(roomCode) {
+    const { error } = await supabaseClient.from('player_cards').delete().eq('room_code', roomCode);
+    if (error) console.error('Ошибка очистки player_cards:', error);
+}
+
+// Вызывается хостом один раз, в момент перехода фазы starting -> game.
+async function generateCardsForRoom(roomCode, players) {
+    const already = await dbCardsExist(roomCode);
+    if (already) return; // защита от повторной генерации на следующем тике поллинга
+    const pool = await dbFetchCharacterPool();
+    if (pool.length === 0) {
+        console.error('character_pool пуст — карточки не сгенерированы.');
+        return;
+    }
+    for (const p of players) {
+        const card = generateBalancedCard(pool);
+        await dbInsertPlayerCard(roomCode, p.id, card);
+    }
+}
+
+// ==========================================
 // ПОЛЛИНГ
 // ==========================================
 function startPolling() {
@@ -213,6 +307,7 @@ async function pollTick() {
             alert('Старт отменён: ' + notReady.name + ' не готов(а).');
             room.phase = 'lobby';
         } else if (room.countdown_ends_at && new Date(room.countdown_ends_at) <= new Date()) {
+            await generateCardsForRoom(state.currentRoomCode, players);
             await dbUpdateRoom(state.currentRoomCode, { phase: 'game' });
             room.phase = 'game';
         }
@@ -290,12 +385,12 @@ function renderLobby() {
                 ${isHost ? `<button class="btn btn-ghost btn-sm" onclick="openCatalog()">${room.scenario_id ? 'Сменить' : 'Выбрать'}</button>` : ''}
             </div>
             <p id="scenarioSummary">${room.scenario_id ? 'Загрузка...' : 'Сценарий ещё не выбран.'}</p>
-            ${room.scenario_id ? `<button class="btn btn-ghost btn-sm" onclick="openScenarioDetail('${room.scenario_id}')">Подробнее</button>` : ''}
+            <div id="scenarioDetailBtn">${room.scenario_id ? `<button class="btn btn-ghost btn-sm" onclick="openScenarioDetail('${room.scenario_id}')">Подробнее</button>` : ''}</div>
         </div>
 
-        <div class="panel">
+        <div class="panel" id="settingsPanel">
             <h2>Настройки игры</h2>
-            ${isHost ? renderSettingsEditable(settings) : renderSettingsReadonly(settings)}
+            <div id="settingsContent">${isHost ? renderSettingsEditable(settings) : renderSettingsReadonly(settings)}</div>
         </div>
 
         <div class="panel">
@@ -323,6 +418,8 @@ function renderLobby() {
 
     if (room.scenario_id) loadScenarioSummary(room.scenario_id);
     if (isHost) regenerateRoundTypeInputs();
+    state.lastSeenSettings = JSON.stringify(settings);
+    state.lastSeenScenarioId = room.scenario_id;
     updateLobbyDynamic();
 }
 
@@ -390,6 +487,30 @@ function updateLobbyDynamic() {
     if (readyBtn && me) {
         readyBtn.textContent = me.is_ready ? 'Я готов ✔ (нажми, чтобы отменить)' : 'Не готов (нажми, когда будешь готов)';
         readyBtn.className = 'btn ' + (me.is_ready ? 'btn-ghost' : 'btn-primary');
+    }
+
+    // Живое обновление настроек и сценария — только у не-хоста.
+    // У хоста форму настроек не трогаем, иначе он потеряет несохранённые правки во время ввода.
+    if (!isHost) {
+        const settingsJson = JSON.stringify(room.settings || {});
+        if (state.lastSeenSettings !== settingsJson) {
+            state.lastSeenSettings = settingsJson;
+            const settingsContent = document.getElementById('settingsContent');
+            if (settingsContent) settingsContent.innerHTML = renderSettingsReadonly(room.settings || {});
+        }
+        if (state.lastSeenScenarioId !== room.scenario_id) {
+            state.lastSeenScenarioId = room.scenario_id;
+            const summaryEl = document.getElementById('scenarioSummary');
+            const btnWrap = document.getElementById('scenarioDetailBtn');
+            if (room.scenario_id) {
+                if (summaryEl) summaryEl.textContent = 'Загрузка...';
+                loadScenarioSummary(room.scenario_id);
+                if (btnWrap) btnWrap.innerHTML = `<button class="btn btn-ghost btn-sm" onclick="openScenarioDetail('${room.scenario_id}')">Подробнее</button>`;
+            } else {
+                if (summaryEl) summaryEl.textContent = 'Сценарий ещё не выбран.';
+                if (btnWrap) btnWrap.innerHTML = '';
+            }
+        }
     }
 
     renderChatMessages();
@@ -528,7 +649,11 @@ function renderGameStub() {
         <div class="hazard-strip"></div>
         <div class="panel" style="text-align:center;">
             <h2>Игра началась</h2>
-            <p>Раздача персонажей и игровой стол появятся на следующих шагах разработки.</p>
+            <p class="muted-note">Полноценный игровой стол появится на Шаге 5. Ниже — тестовый просмотр карточки персонажа (Шаг 4), чтобы проверить генерацию и баланс.</p>
+        </div>
+        <div class="panel" id="myCardPanel">
+            <h2>Моя карточка (тест)</h2>
+            <p class="muted-note">Загрузка...</p>
         </div>
         <div class="panel">
             <h2>Игроки</h2>
@@ -536,9 +661,25 @@ function renderGameStub() {
         </div>
         ${isHost ? `<button class="btn btn-ghost" onclick="actionResetToLobby()">Сбросить в лобби (для теста)</button>` : ''}
     `;
+    loadMyCard();
+}
+
+async function loadMyCard() {
+    const card = await dbFetchMyCard(state.currentRoomCode, state.playerId);
+    const el = document.getElementById('myCardPanel');
+    if (!el) return;
+    if (card.length === 0) {
+        el.innerHTML = '<h2>Моя карточка (тест)</h2><p class="muted-note">Карточка не найдена (генерация ещё не завершилась или пуст character_pool).</p>';
+        return;
+    }
+    const sum = card.reduce((s, c) => s + (c.value || 0), 0);
+    el.innerHTML = `<h2>Моя карточка (тест)</h2>
+        <ul class="prop-list">${card.map(c => `<li><span class="prop-tag">${escapeHtml(CATEGORY_LABELS[c.category] || c.category)}</span>${escapeHtml(c.text)} <span class="muted-note">(${c.value > 0 ? '+' : ''}${c.value})</span></li>`).join('')}</ul>
+        <p class="muted-note">Сумма баланса карточки: ${sum > 0 ? '+' : ''}${sum} (ориентир — ближе к 0, не строго)</p>`;
 }
 
 async function actionResetToLobby() {
+    await dbClearCards(state.currentRoomCode);
     await dbUpdateRoom(state.currentRoomCode, { phase: 'lobby', countdown_ends_at: null });
     state.lastRenderedView = null;
 }
