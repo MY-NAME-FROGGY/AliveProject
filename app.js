@@ -32,6 +32,26 @@ const CATEGORY_LABELS = {
 };
 const CATEGORY_LIST = Object.keys(CATEGORY_LABELS);
 
+// Порядок фаз внутри раунда (Шаг 5).
+// durationKey указывает, из какого поля settings.phase_seconds брать длительность таймера;
+// null означает, что у фазы нет автотаймера — ведущий переключает её вручную, когда готов.
+const PHASE_SEQUENCE = ['reveal', 'discussion', 'nomination', 'defense', 'voting', 'vote_result', 'bunker_reveal'];
+const PHASE_META = {
+    reveal:        { label: 'Открытие раунда',     icon: '🃏', color: '#5b6b48', durationKey: null },
+    discussion:    { label: 'Обсуждение',           icon: '💬', color: '#5b8a4a', durationKey: 'discussion' },
+    nomination:    { label: 'Выставление',          icon: '👉', color: '#d3a026', durationKey: 'discussion' },
+    defense:       { label: 'Оправдательная речь',  icon: '🗣️', color: '#a63d2f', durationKey: 'defense' },
+    voting:        { label: 'Голосование',          icon: '🗳️', color: '#7a5c1e', durationKey: 'voting' },
+    vote_result:   { label: 'Итог голосования',     icon: '📋', color: '#a63d2f', durationKey: null },
+    bunker_reveal: { label: 'Открытие бункера',     icon: '🔓', color: '#4a4e28', durationKey: null },
+    awaiting_verdict: { label: 'Раунды завершены',  icon: '⏳', color: '#8a6b1d', durationKey: null }
+};
+function phaseDuration(phaseKey) {
+    const key = PHASE_META[phaseKey]?.durationKey;
+    if (!key) return 0;
+    return (state.room?.settings?.phase_seconds?.[key]) || 60;
+}
+
 const state = {
     playerId: localStorage.getItem('playerId') || generateSafeId(),
     playerName: localStorage.getItem('playerName') || '',
@@ -46,7 +66,10 @@ const state = {
     pollInterval: null,
     countdownTick: null,
     lastSeenSettings: null,
-    lastSeenScenarioId: undefined
+    lastSeenScenarioId: undefined,
+    lastGameRenderKey: null,
+    gamePhaseTick: null,
+    gameScenario: null
 };
 localStorage.setItem('playerId', state.playerId);
 
@@ -266,6 +289,20 @@ async function generateCardsForRoom(roomCode, players) {
     }
 }
 
+// Выбирает 2-4 бонусных свойства бункера из восьми для конкретной партии.
+// Точную формулу "сколько именно от числа игроков" в документе не зафиксировали цифрами,
+// поэтому пока простое правило: <=5 игроков -> 2, 6-8 -> 3, 9+ -> 4. Легко поменять при желании.
+async function selectActiveBonusIds(scenarioId, playerCount) {
+    if (!scenarioId) return [];
+    const { bonus } = await dbFetchScenarioDetail(scenarioId);
+    if (!bonus || bonus.length === 0) return [];
+    let count = 2;
+    if (playerCount >= 9) count = 4;
+    else if (playerCount >= 6) count = 3;
+    count = Math.min(count, bonus.length);
+    return shuffleArray(bonus).slice(0, count).map(b => b.id);
+}
+
 // ==========================================
 // ПОЛЛИНГ
 // ==========================================
@@ -308,7 +345,19 @@ async function pollTick() {
             room.phase = 'lobby';
         } else if (room.countdown_ends_at && new Date(room.countdown_ends_at) <= new Date()) {
             await generateCardsForRoom(state.currentRoomCode, players);
-            await dbUpdateRoom(state.currentRoomCode, { phase: 'game' });
+            const activeBonusIds = await selectActiveBonusIds(room.scenario_id, players.length);
+            await dbUpdateRoom(state.currentRoomCode, {
+                phase: 'game',
+                current_round: 1,
+                current_phase: 'reveal',
+                phase_ends_at: null,
+                phase_running: false,
+                phase_paused_remaining: null,
+                nominees: [],
+                defense_index: 0,
+                active_bonus_ids: activeBonusIds,
+                revealed_bonus_ids: []
+            });
             room.phase = 'game';
         }
     }
@@ -320,7 +369,14 @@ async function pollTick() {
         if (state.lastRenderedView !== 'lobby') { renderLobby(); state.lastRenderedView = 'lobby'; }
         else updateLobbyDynamic();
     } else if (state.view === 'game') {
-        if (state.lastRenderedView !== 'game') { renderGameStub(); state.lastRenderedView = 'game'; }
+        const key = room.current_phase + '|' + room.current_round + '|' + (room.defense_index || 0);
+        if (state.lastRenderedView !== 'game' || state.lastGameRenderKey !== key) {
+            state.lastGameRenderKey = key;
+            renderGameTable();
+        } else {
+            updateGameDynamic();
+        }
+        state.lastRenderedView = 'game';
     }
 }
 
@@ -572,6 +628,32 @@ function stopCountdownTick() {
     state.countdownTick = null;
 }
 
+function startGamePhaseTick() {
+    stopGamePhaseTick();
+    state.gamePhaseTick = setInterval(() => {
+        const el = document.getElementById('gamePhaseCountdown');
+        const room = state.room;
+        if (!el || !room || !room.phase_running || !room.phase_ends_at) return stopGamePhaseTick();
+        const left = Math.max(0, Math.round((new Date(room.phase_ends_at) - Date.now()) / 1000));
+        el.textContent = left + ' сек.';
+    }, 250);
+}
+function stopGamePhaseTick() {
+    if (state.gamePhaseTick) clearInterval(state.gamePhaseTick);
+    state.gamePhaseTick = null;
+}
+function syncGamePhaseTimerTicker() {
+    const room = state.room;
+    stopGamePhaseTick();
+    const el = document.getElementById('gamePhaseCountdown');
+    if (!el) return;
+    if (room.phase_running && room.phase_ends_at) {
+        startGamePhaseTick();
+    } else {
+        el.textContent = room.phase_paused_remaining ? 'На паузе: ' + room.phase_paused_remaining + ' сек.' : '';
+    }
+}
+
 async function loadScenarioSummary(id) {
     const { scenario } = await dbFetchScenarioDetail(id);
     const el = document.getElementById('scenarioSummary');
@@ -639,29 +721,123 @@ function backToLobby() {
 }
 
 // ==========================================
-// РЕНДЕР: ЗАГЛУШКА ИГРЫ (Шаги 4-7 добавят настоящий стол)
+// РЕНДЕР: ИГРОВОЙ СТОЛ И ДВИЖОК ФАЗ (Шаг 5)
 // ==========================================
-function renderGameStub() {
+function renderGameTable() {
+    stopCountdownTick();
     const room = state.room;
     const isHost = room.host_id === state.playerId;
+    const meta = PHASE_META[room.current_phase] || { label: room.current_phase, icon: '❔', color: '#555', durationKey: null };
+    const hasTimer = !!meta.durationKey;
+    const nominees = room.nominees || [];
+    const defenseIdx = room.defense_index || 0;
+
+    let phaseBody = '';
+    if (room.current_phase === 'reveal') {
+        phaseBody = `<p class="muted-note">Открытие характеристик по лимиту раунда появится на Шаге 6.</p>`;
+    } else if (room.current_phase === 'nomination') {
+        const names = nominees.map(id => escapeHtml((state.players.find(p => p.id === id) || {}).name || '?')).join(', ');
+        phaseBody = `<p>Выставлено: <strong>${names || 'пока никто'}</strong></p><p class="muted-note">Любой игрок может выставить другого кнопкой в списке ниже.</p>`;
+    } else if (room.current_phase === 'defense') {
+        const speaker = state.players.find(p => p.id === nominees[defenseIdx]);
+        phaseBody = `<p>Сейчас выступает: <strong>${escapeHtml(speaker ? speaker.name : '—')}</strong> (${nominees.length ? defenseIdx + 1 : 0} из ${nominees.length})</p>`;
+    } else if (room.current_phase === 'voting') {
+        const names = nominees.map(id => escapeHtml((state.players.find(p => p.id === id) || {}).name || '?')).join(', ');
+        phaseBody = `<p>Кандидаты: <strong>${names || 'нет выставленных'}</strong></p><p class="muted-note">Само голосование и подсчёт появятся на Шаге 7.</p>`;
+    } else if (room.current_phase === 'vote_result') {
+        phaseBody = `<p class="muted-note">Итоги голосования появятся на Шаге 7.</p>`;
+    } else if (room.current_phase === 'awaiting_verdict') {
+        phaseBody = `<p>Раунды закончены. Финальный вердикт ведущего появится на Шаге 7.</p>`;
+    }
+
     document.getElementById('app').innerHTML = `
         <h1>ОСТАТЬСЯ <span>В ЖИВЫХ</span></h1>
         <div class="hazard-strip"></div>
-        <div class="panel" style="text-align:center;">
-            <h2>Игра началась</h2>
-            <p class="muted-note">Полноценный игровой стол появится на Шаге 5. Ниже — тестовый просмотр карточки персонажа (Шаг 4), чтобы проверить генерацию и баланс.</p>
+
+        <div class="panel" style="border-left:6px solid ${meta.color}; text-align:center;">
+            <div style="font-size:14px; letter-spacing:0.08em; text-transform:uppercase; color:${meta.color};">${meta.icon} ${escapeHtml(meta.label)} · Раунд ${room.current_round || 1}</div>
+            ${hasTimer ? `<div style="font-size:28px; font-weight:bold; margin-top:6px;" id="gamePhaseCountdown"></div>` : ''}
+            ${phaseBody}
+            ${isHost ? renderHostPhaseControls(room, hasTimer) : ''}
         </div>
+
+        <div class="panel">
+            <div class="section-title"><h2>Сценарий</h2>
+                <button class="btn btn-ghost btn-sm" onclick="toggleScenarioPanel()">Показать/скрыть</button>
+            </div>
+            <div id="scenarioPanelGame" style="display:none;"><p class="muted-note">Загрузка...</p></div>
+        </div>
+
+        <div class="panel">
+            <div class="section-title"><h2>Бункер</h2>
+                ${isHost ? `<button class="btn btn-ghost btn-sm" onclick="actionRevealBonus()">Открыть случайное доп. свойство</button>` : ''}
+            </div>
+            <ul class="prop-list" id="bunkerRevealedList"></ul>
+        </div>
+
+        <div class="panel">
+            <h2>Стол</h2>
+            <ul class="player-list" id="gamePlayersList"></ul>
+        </div>
+
         <div class="panel" id="myCardPanel">
             <h2>Моя карточка (тест)</h2>
             <p class="muted-note">Загрузка...</p>
         </div>
-        <div class="panel">
-            <h2>Игроки</h2>
-            <ul class="player-list">${state.players.map(p => `<li><span>${escapeHtml(p.name)}${p.id === state.playerId ? ' (Вы)' : ''}</span></li>`).join('')}</ul>
-        </div>
+
         ${isHost ? `<button class="btn btn-ghost" onclick="actionResetToLobby()">Сбросить в лобби (для теста)</button>` : ''}
     `;
+
     loadMyCard();
+    loadScenarioPanelGame();
+    updateGameDynamic();
+}
+
+function renderHostPhaseControls(room, hasTimer) {
+    let timerButtons = '';
+    if (hasTimer) {
+        if (room.phase_running) {
+            timerButtons = `<button class="btn btn-ghost btn-sm" onclick="hostPauseTimer()">Пауза</button>
+                <button class="btn btn-ghost btn-sm" onclick="hostStopTimer()">Стоп</button>`;
+        } else if (room.phase_paused_remaining) {
+            timerButtons = `<button class="btn btn-primary btn-sm" onclick="hostResumeTimer()">Возобновить</button>
+                <button class="btn btn-ghost btn-sm" onclick="hostStopTimer()">Стоп</button>`;
+        } else {
+            timerButtons = `<button class="btn btn-primary btn-sm" onclick="hostStartTimer()">Старт таймера</button>`;
+        }
+    }
+    return `<div style="margin-top:12px; display:flex; gap:8px; justify-content:center; flex-wrap:wrap;">
+        ${timerButtons}
+        <button class="btn btn-danger btn-sm" onclick="hostAdvancePhase()">Далее →</button>
+    </div>`;
+}
+
+function updateGameDynamic() {
+    const room = state.room;
+    if (!room) return;
+    const nominees = room.nominees || [];
+    const defenseIdx = room.defense_index || 0;
+
+    const listEl = document.getElementById('gamePlayersList');
+    if (listEl) {
+        listEl.innerHTML = state.players.map(p => {
+            const isMe = p.id === state.playerId;
+            const isNominated = nominees.includes(p.id);
+            const isSpeaking = room.current_phase === 'defense' && nominees[defenseIdx] === p.id;
+            const canNominate = room.current_phase === 'nomination' && !isMe;
+            return `<li${isSpeaking ? ' style="border:2px solid var(--hazard);"' : ''}>
+                <span>
+                    <span class="player-name">${escapeHtml(p.name)}${isMe ? ' (Вы)' : ''}</span>
+                    ${p.id === room.host_id ? '<span class="host-badge">Ведущий</span>' : ''}
+                    ${isNominated ? '<span class="badge badge-timeout">Выставлен(а)</span>' : ''}
+                </span>
+                ${canNominate ? `<button class="btn btn-ghost btn-sm" onclick="actionToggleNominate('${p.id}')">${isNominated ? 'Снять' : 'Выставить'}</button>` : ''}
+            </li>`;
+        }).join('');
+    }
+
+    refreshBunkerList();
+    syncGamePhaseTimerTicker();
 }
 
 async function loadMyCard() {
@@ -678,10 +854,159 @@ async function loadMyCard() {
         <p class="muted-note">Сумма баланса карточки: ${sum > 0 ? '+' : ''}${sum} (ориентир — ближе к 0, не строго)</p>`;
 }
 
+async function loadScenarioPanelGame() {
+    const room = state.room;
+    if (!room.scenario_id) return;
+    if (!state.gameScenario || state.gameScenario.scenario?.id !== room.scenario_id) {
+        state.gameScenario = await dbFetchScenarioDetail(room.scenario_id);
+    }
+    renderScenarioPanelGameContent();
+    refreshBunkerList();
+}
+
+function renderScenarioPanelGameContent() {
+    const el = document.getElementById('scenarioPanelGame');
+    if (!el || !state.gameScenario || !state.gameScenario.scenario) return;
+    const { scenario, base, bonus } = state.gameScenario;
+    const revealedIds = state.room.revealed_bonus_ids || [];
+    const revealedBonus = (bonus || []).filter(b => revealedIds.includes(b.id));
+    el.innerHTML = `
+        <h3>${escapeHtml(scenario.title)}</h3>
+        <p>${escapeHtml(scenario.catastrophe_description)}</p>
+        <h4 style="margin-top:10px;">Стартовые свойства</h4>
+        <ul class="prop-list">${base.map(p => `<li><span class="prop-tag">База</span>${escapeHtml(p.text)}</li>`).join('')}</ul>
+        ${revealedBonus.length ? `<h4 style="margin-top:10px;">Открытые доп. свойства</h4><ul class="prop-list">${revealedBonus.map(p => `<li class="bonus"><span class="prop-tag">Бонус</span>${escapeHtml(p.text)}</li>`).join('')}</ul>` : ''}
+    `;
+}
+
+function refreshBunkerList() {
+    const bunkerEl = document.getElementById('bunkerRevealedList');
+    if (!bunkerEl) return;
+    const revealedIds = state.room.revealed_bonus_ids || [];
+    const bonus = state.gameScenario?.bonus || [];
+    const revealedItems = bonus.filter(b => revealedIds.includes(b.id));
+    bunkerEl.innerHTML = revealedItems.length
+        ? revealedItems.map(b => `<li class="bonus"><span class="prop-tag">Бонус</span>${escapeHtml(b.text)}</li>`).join('')
+        : '<li class="muted-note" style="list-style:none;">Пока ничего не открыто.</li>';
+}
+
+function toggleScenarioPanel() {
+    const el = document.getElementById('scenarioPanelGame');
+    if (!el) return;
+    if (el.style.display === 'none') { el.style.display = 'block'; loadScenarioPanelGame(); }
+    else el.style.display = 'none';
+}
+
+// ---------- Управление таймером фазы (только ведущий) ----------
+async function hostStartTimer() {
+    const seconds = phaseDuration(state.room.current_phase);
+    if (seconds <= 0) return;
+    const ends = new Date(Date.now() + seconds * 1000).toISOString();
+    await dbUpdateRoom(state.currentRoomCode, { phase_ends_at: ends, phase_running: true, phase_paused_remaining: null });
+}
+async function hostPauseTimer() {
+    const room = state.room;
+    if (!room.phase_running || !room.phase_ends_at) return;
+    const remaining = Math.max(0, Math.round((new Date(room.phase_ends_at) - Date.now()) / 1000));
+    await dbUpdateRoom(state.currentRoomCode, { phase_running: false, phase_ends_at: null, phase_paused_remaining: remaining });
+}
+async function hostResumeTimer() {
+    const remaining = state.room.phase_paused_remaining;
+    if (!remaining) return;
+    const ends = new Date(Date.now() + remaining * 1000).toISOString();
+    await dbUpdateRoom(state.currentRoomCode, { phase_running: true, phase_ends_at: ends, phase_paused_remaining: null });
+}
+async function hostStopTimer() {
+    await dbUpdateRoom(state.currentRoomCode, { phase_running: false, phase_ends_at: null, phase_paused_remaining: null });
+}
+
+// ---------- Переход между фазами (только ведущий) ----------
+async function hostAdvancePhase() {
+    const room = state.room;
+    const phase = room.current_phase;
+    const round = room.current_round || 1;
+    const nominees = room.nominees || [];
+    const defenseIdx = room.defense_index || 0;
+
+    // Внутри "оправдательной речи" сначала проходим всех выставленных по очереди.
+    if (phase === 'defense' && defenseIdx < nominees.length - 1) {
+        const seconds = phaseDuration('defense');
+        const ends = seconds > 0 ? new Date(Date.now() + seconds * 1000).toISOString() : null;
+        await dbUpdateRoom(state.currentRoomCode, {
+            defense_index: defenseIdx + 1,
+            phase_ends_at: ends,
+            phase_running: seconds > 0,
+            phase_paused_remaining: null
+        });
+        return;
+    }
+
+    const idx = PHASE_SEQUENCE.indexOf(phase);
+    let nextPhase, nextRound = round, nextNominees = nominees;
+
+    if (idx === -1 || idx === PHASE_SEQUENCE.length - 1) {
+        const totalRounds = room.settings?.rounds || 1;
+        if (round >= totalRounds) {
+            await dbUpdateRoom(state.currentRoomCode, {
+                current_phase: 'awaiting_verdict', phase_ends_at: null, phase_running: false, phase_paused_remaining: null
+            });
+            return;
+        }
+        nextPhase = PHASE_SEQUENCE[0];
+        nextRound = round + 1;
+        nextNominees = [];
+    } else {
+        nextPhase = PHASE_SEQUENCE[idx + 1];
+    }
+
+    const seconds = phaseDuration(nextPhase);
+    const ends = seconds > 0 ? new Date(Date.now() + seconds * 1000).toISOString() : null;
+
+    await dbUpdateRoom(state.currentRoomCode, {
+        current_phase: nextPhase,
+        current_round: nextRound,
+        nominees: nextNominees,
+        defense_index: 0,
+        phase_ends_at: ends,
+        phase_running: seconds > 0,
+        phase_paused_remaining: null
+    });
+}
+
+// ---------- Выставление кандидатов (доступно всем игрокам в фазе "nomination") ----------
+async function actionToggleNominate(targetId) {
+    const room = state.room;
+    if (room.current_phase !== 'nomination') return;
+    if (targetId === state.playerId) return alert('Нельзя выставить самого себя.');
+    let nominees = room.nominees || [];
+    nominees = nominees.includes(targetId) ? nominees.filter(id => id !== targetId) : [...nominees, targetId];
+    await dbUpdateRoom(state.currentRoomCode, { nominees });
+}
+
+// ---------- Открытие случайного доп. свойства бункера (кнопка ведущего, п.3.2.2) ----------
+async function actionRevealBonus() {
+    const room = state.room;
+    const active = room.active_bonus_ids || [];
+    const revealed = room.revealed_bonus_ids || [];
+    const remaining = active.filter(id => !revealed.includes(id));
+    if (remaining.length === 0) return alert('Все дополнительные свойства этой партии уже открыты.');
+    const pick = remaining[Math.floor(Math.random() * remaining.length)];
+    await dbUpdateRoom(state.currentRoomCode, { revealed_bonus_ids: [...revealed, pick] });
+}
+
 async function actionResetToLobby() {
+    stopGamePhaseTick();
     await dbClearCards(state.currentRoomCode);
-    await dbUpdateRoom(state.currentRoomCode, { phase: 'lobby', countdown_ends_at: null });
+    await dbUpdateRoom(state.currentRoomCode, {
+        phase: 'lobby', countdown_ends_at: null,
+        current_round: 1, current_phase: 'reveal',
+        phase_ends_at: null, phase_running: false, phase_paused_remaining: null,
+        nominees: [], defense_index: 0,
+        active_bonus_ids: [], revealed_bonus_ids: []
+    });
     state.lastRenderedView = null;
+    state.lastGameRenderKey = null;
+    state.gameScenario = null;
 }
 
 // ==========================================
