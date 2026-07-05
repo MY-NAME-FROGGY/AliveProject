@@ -34,7 +34,7 @@ const CATEGORY_LIST = Object.keys(CATEGORY_LABELS);
 
 const PHASE_SEQUENCE = ['reveal', 'discussion', 'nomination', 'defense', 'voting', 'vote_result', 'bunker_reveal'];
 const PHASE_META = {
-    reveal:        { label: 'Открытие раунда',     icon: '🃏', color: '#5b6b48', durationKey: null },
+    reveal:        { label: 'Открытие раунда',     icon: '🃏', color: '#5b6b48', durationKey: 'reveal' },
     discussion:    { label: 'Обсуждение',           icon: '💬', color: '#5b8a4a', durationKey: 'discussion' },
     nomination:    { label: 'Выставление',          icon: '👉', color: '#d3a026', durationKey: 'discussion' },
     defense:       { label: 'Оправдательная речь',  icon: '🗣️', color: '#a63d2f', durationKey: 'defense' },
@@ -91,8 +91,8 @@ function genCode() {
 function defaultSettings() {
     return {
         min_players: 2, max_players: 12, target_survivors: 3, rounds: 6,
-        round_char_type: Array(6).fill('any'),
-        phase_seconds: { discussion: 180, defense: 30, voting: 60 },
+        round_reveals: Array(6).fill(['any']),
+        phase_seconds: { reveal: 60, discussion: 180, defense: 30, voting: 60 },
         private_chat_enabled: false
     };
 }
@@ -261,6 +261,20 @@ async function dbFetchMyCard(roomCode, playerId) {
 async function dbClearCards(roomCode) {
     const { error } = await supabaseClient.from('player_cards').delete().eq('room_code', roomCode);
     if (error) console.error('Ошибка очистки player_cards:', error);
+}
+
+// ---------- Личные заметки игрока (приватные) ----------
+async function dbFetchNote(roomCode, playerId) {
+    const { data, error } = await supabaseClient.from('notes')
+        .select('*').eq('room_code', roomCode).eq('player_id', playerId).maybeSingle();
+    if (error) { console.error(error); return null; }
+    return data;
+}
+
+async function dbSaveNote(roomCode, playerId, text) {
+    const { error } = await supabaseClient.from('notes')
+        .upsert({ room_code: roomCode, player_id: playerId, text, updated_at: new Date().toISOString() }, { onConflict: 'room_code,player_id' });
+    if (error) console.error('Ошибка сохранения заметки:', error);
 }
 
 // ---------- Ивенты ведущего ----------
@@ -467,7 +481,7 @@ function renderLobby() {
         </div>
     `;
     if (room.scenario_id) loadScenarioSummary(room.scenario_id);
-    if (isHost) regenerateRoundTypeInputs();
+    if (isHost) regenerateRoundBlocks();
     state.lastSeenSettings = JSON.stringify(settings);
     state.lastSeenScenarioId = room.scenario_id;
     updateLobbyDynamic();
@@ -476,49 +490,76 @@ function renderLobby() {
 function renderSettingsEditable(s) {
     return `
         <div class="settings-grid">
-            <div class="settings-field"><label>Мин. игроков</label><input type="number" id="setMin" value="${s.min_players ?? 4}"></div>
-            <div class="settings-field"><label>Макс. игроков</label><input type="number" id="setMax" value="${s.max_players ?? 12}"></div>
-            <div class="settings-field"><label>Нужно выживших</label><input type="number" id="setSurvivors" value="${s.target_survivors ?? 3}"></div>
-            <div class="settings-field"><label>Кол-во раундов</label><input type="number" id="setRounds" value="${s.rounds ?? 6}" onchange="regenerateRoundTypeInputs()"></div>
-            <div class="settings-field"><label>Обсуждение, сек</label><input type="number" id="setDiscussion" value="${s.phase_seconds?.discussion ?? 180}"></div>
-            <div class="settings-field"><label>Оправдание, сек</label><input type="number" id="setDefense" value="${s.phase_seconds?.defense ?? 30}"></div>
-            <div class="settings-field"><label>Голосование, сек</label><input type="number" id="setVoting" value="${s.phase_seconds?.voting ?? 60}"></div>
+            <div class="settings-field"><label>Мин. игроков</label><input type="number" min="1" id="setMin" value="${s.min_players ?? 4}"></div>
+            <div class="settings-field"><label>Макс. игроков</label><input type="number" min="1" id="setMax" value="${s.max_players ?? 12}"></div>
+            <div class="settings-field"><label>Нужно выживших</label><input type="number" min="1" id="setSurvivors" value="${s.target_survivors ?? 3}"></div>
+            <div class="settings-field"><label>Кол-во раундов</label><input type="number" min="1" id="setRounds" value="${s.rounds ?? 6}" onchange="regenerateRoundBlocks()"></div>
+            <div class="settings-field"><label>Открытие, сек</label><input type="number" min="1" id="setReveal" value="${s.phase_seconds?.reveal ?? 60}"></div>
+            <div class="settings-field"><label>Обсуждение, сек</label><input type="number" min="1" id="setDiscussion" value="${s.phase_seconds?.discussion ?? 180}"></div>
+            <div class="settings-field"><label>Оправдание, сек</label><input type="number" min="1" id="setDefense" value="${s.phase_seconds?.defense ?? 30}"></div>
+            <div class="settings-field"><label>Голосование, сек</label><input type="number" min="1" id="setVoting" value="${s.phase_seconds?.voting ?? 60}"></div>
             <div class="settings-field wide">
                 <label><input type="checkbox" id="setPrivateChat" style="width:auto;display:inline-block;margin-right:6px;vertical-align:middle;" ${s.private_chat_enabled ? 'checked' : ''}>Разрешить личные чаты между игроками</label>
             </div>
         </div>
-        <h3 style="margin-top:14px;">Тип характеристики по раундам</h3>
-        <div id="roundTypesContainer"></div>
+        <h3 style="margin-top:14px;">Характеристики по раундам</h3>
+        <p class="muted-note">На каждый раунд — сколько характеристик можно открыть и какого типа каждая (любая или конкретная категория).</p>
+        <div id="roundBlocksContainer"></div>
         <button class="btn btn-primary btn-sm" style="margin-top:10px;" onclick="actionSaveSettings()">Сохранить настройки</button>
     `;
 }
 
 function renderSettingsReadonly(s) {
-    const roundTypes = (s.round_char_type || []).map((t, i) => `Раунд ${i + 1}: ${t === 'any' ? 'любая' : (CATEGORY_LABELS[t] || t)}`).join(' · ');
+    const roundSummary = (s.round_reveals || []).map((slots, i) => {
+        const labels = (slots || []).map(t => t === 'any' ? 'любая' : (CATEGORY_LABELS[t] || t));
+        return `Раунд ${i + 1}: ${labels.length} (${labels.join(', ')})`;
+    }).join(' · ');
     return `
         <div class="readonly-settings">
             Игроков: ${s.min_players ?? '?'}–${s.max_players ?? '?'} · Нужно выживших: ${s.target_survivors ?? '?'}<br>
             Раундов: ${s.rounds ?? '?'}<br>
-            ${roundTypes ? '<div class="muted-note">' + roundTypes + '</div>' : ''}
-            Фазы: обсуждение ${s.phase_seconds?.discussion ?? '?'}с · оправдание ${s.phase_seconds?.defense ?? '?'}с · голосование ${s.phase_seconds?.voting ?? '?'}с<br>
+            ${roundSummary ? '<div class="muted-note">' + roundSummary + '</div>' : ''}
+            Фазы: открытие ${s.phase_seconds?.reveal ?? '?'}с · обсуждение ${s.phase_seconds?.discussion ?? '?'}с · оправдание ${s.phase_seconds?.defense ?? '?'}с · голосование ${s.phase_seconds?.voting ?? '?'}с<br>
             Личные чаты: ${s.private_chat_enabled ? 'включены' : 'выключены'}
         </div>
     `;
 }
 
-function regenerateRoundTypeInputs() {
+function regenerateRoundBlocks() {
     const roundsInput = document.getElementById('setRounds');
     if (!roundsInput) return;
-    const rounds = parseInt(roundsInput.value) || 1;
-    const container = document.getElementById('roundTypesContainer');
-    const current = state.room?.settings?.round_char_type || [];
+    const rounds = Math.max(1, parseInt(roundsInput.value) || 1);
+    const container = document.getElementById('roundBlocksContainer');
+    const current = state.room?.settings?.round_reveals || [];
     let html = '';
     for (let i = 0; i < rounds; i++) {
-        const val = current[i] || 'any';
-        html += `<div class="round-type-row"><span>Раунд ${i + 1}</span><select id="roundType_${i}">`;
-        html += `<option value="any" ${val === 'any' ? 'selected' : ''}>Любая</option>`;
-        html += CATEGORY_LIST.map(c => `<option value="${c}" ${val === c ? 'selected' : ''}>${CATEGORY_LABELS[c]}</option>`).join('');
-        html += `</select></div>`;
+        const count = (current[i] && current[i].length) || 1;
+        html += `<div style="background:var(--void); border-radius:4px; padding:8px 10px; margin-bottom:8px;">
+            <div style="display:flex; align-items:center; gap:10px;">
+                <strong style="width:80px; flex-shrink:0;">Раунд ${i + 1}</strong>
+                <label class="muted-note">характеристик: <input type="number" min="1" max="10" id="roundCount_${i}" value="${count}" onchange="regenerateRoundSlots(${i})" style="width:60px; display:inline-block; margin:0 0 0 4px;"></label>
+            </div>
+            <div id="roundSlots_${i}" style="display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;"></div>
+        </div>`;
+    }
+    container.innerHTML = html;
+    for (let i = 0; i < rounds; i++) regenerateRoundSlots(i, current[i]);
+}
+
+function regenerateRoundSlots(i, presetSlots) {
+    const countInput = document.getElementById('roundCount_' + i);
+    if (!countInput) return;
+    const count = Math.max(1, Math.min(10, parseInt(countInput.value) || 1));
+    const container = document.getElementById('roundSlots_' + i);
+    if (!container) return;
+    const current = presetSlots || (state.room?.settings?.round_reveals?.[i]) || [];
+    let html = '';
+    for (let j = 0; j < count; j++) {
+        const val = current[j] || 'any';
+        html += `<select id="roundSlot_${i}_${j}" style="width:auto; margin:0;">` +
+            `<option value="any" ${val === 'any' ? 'selected' : ''}>Любая</option>` +
+            CATEGORY_LIST.map(c => `<option value="${c}" ${val === c ? 'selected' : ''}>${CATEGORY_LABELS[c]}</option>`).join('') +
+            `</select>`;
     }
     container.innerHTML = html;
 }
@@ -986,39 +1027,128 @@ async function actionToggleScenarioVisible() {
     await dbUpdateRoom(state.currentRoomCode, { scenario_visible: !state.room.scenario_visible });
 }
 
-// [ИСПРАВЛЕНО 3] Полностью переписана логика отображения карточки и добавлено открытие
+// [Шаг 6] Сколько характеристик и какого типа можно открыть в текущем раунде
+function canRevealCategory(card, room, category) {
+    const roundIdx = (room.current_round || 1) - 1;
+    const slots = (room.settings?.round_reveals || [])[roundIdx] || ['any'];
+    const limit = slots.length;
+    const usedThisRound = card.filter(c => c.round_revealed === room.current_round).length;
+    if (usedThisRound >= limit) return { ok: false, reason: 'Лимит открытий на этот раунд исчерпан (' + limit + ').' };
+
+    const alreadyRevealedCats = new Set(card.filter(c => c.revealed).map(c => c.category));
+    const specificSlotCats = slots.filter(s => s !== 'any');
+    const pendingRequired = specificSlotCats.filter(s => !alreadyRevealedCats.has(s));
+    if (pendingRequired.includes(category)) return { ok: true };
+
+    const thisRoundCards = card.filter(c => c.round_revealed === room.current_round);
+    const usedAnyThisRound = thisRoundCards.filter(c => !specificSlotCats.includes(c.category)).length;
+    const anySlotsTotal = slots.filter(s => s === 'any').length;
+    if (usedAnyThisRound < anySlotsTotal) return { ok: true };
+    return { ok: false, reason: 'В этом раунде такой тип характеристики недоступен.' };
+}
+
 async function loadMyCard() {
     const card = await dbFetchMyCard(state.currentRoomCode, state.playerId);
+    state.myCardCache = card;
     const el = document.getElementById('myCardPanel');
     if (!el) return;
-    
+
     if (card.length === 0) {
         el.innerHTML = `<h2>Моя карточка</h2><p class="muted-note">Карточка не найдена (генерация ещё не завершилась или пуст character_pool).</p>`;
         return;
     }
-    
+
+    const room = state.room;
     const sum = card.reduce((s, c) => s + (c.value || 0), 0);
-    el.innerHTML = `<h2>Моя карточка</h2>
-        <ul class="prop-list">${card.map(c => {
-            const isRevealed = c.revealed;
-            const text = isRevealed ? escapeHtml(c.text) : '<i class="muted-note">Скрыто</i>';
-            const btn = !isRevealed ? `<button class="btn btn-sm btn-primary" style="margin-top:5px;" onclick="actionRevealTrait('${c.id}')">Открыть</button>` : '';
-            return `<li>
-                <span class="prop-tag">${escapeHtml(CATEGORY_LABELS[c.category] || c.category)}</span>
-                ${text} <span class="muted-note">(${c.value > 0 ? '+' : ''}${c.value})</span>
-                ${btn}
-            </li>`;
-        }).join('')}</ul>
+    const note = await dbFetchNote(state.currentRoomCode, state.playerId);
+
+    const itemsHtml = card.map(c => {
+        const isSpecial = c.category === 'special_condition';
+        let liClass = '', body;
+        if (!c.revealed) {
+            const check = canRevealCategory(card, room, c.category);
+            body = check.ok
+                ? `<i class="muted-note">Скрыто</i> <button class="btn btn-sm btn-primary" style="margin-top:5px;" onclick="actionRevealTrait('${c.id}')">Открыть</button>`
+                : `<i class="muted-note">Скрыто</i> <div class="muted-note" style="font-size:11px; margin-top:3px;">${escapeHtml(check.reason)}</div>`;
+        } else if (isSpecial && !c.used) {
+            liClass = ' special-unused';
+            const others = state.players.filter(p => p.id !== state.playerId && p.id !== room.host_id);
+            body = `${escapeHtml(c.text)} <span class="muted-note">(${c.value > 0 ? '+' : ''}${c.value})</span>
+                <div style="margin-top:6px;">
+                    <button class="btn btn-sm btn-primary" onclick="toggleTargetPicker('${c.id}')">Использовать</button>
+                    <div id="targetPicker_${c.id}" style="display:none; margin-top:6px;">
+                        ${others.length ? others.map(p =>
+                            `<label class="muted-note" style="display:block;"><input type="checkbox" value="${p.id}" style="width:auto; display:inline-block; margin-right:4px;">${escapeHtml(p.name)}</label>`
+                        ).join('') : '<span class="muted-note">Нет других игроков для выбора цели.</span>'}
+                        <button class="btn btn-sm btn-danger" style="margin-top:4px;" onclick="actionUseSpecialCondition('${c.id}')">Подтвердить использование</button>
+                    </div>
+                </div>`;
+        } else if (isSpecial && c.used) {
+            liClass = ' special-used';
+            const targetNames = (c.used_targets || []).map(id => (state.players.find(p => p.id === id) || {}).name).filter(Boolean);
+            body = `${escapeHtml(c.text)} <span class="muted-note">(использовано${targetNames.length ? ' · цель: ' + escapeHtml(targetNames.join(', ')) : ''})</span>`;
+        } else {
+            body = `${escapeHtml(c.text)} <span class="muted-note">(${c.value > 0 ? '+' : ''}${c.value})</span>`;
+        }
+        return `<li class="${liClass}"><span class="prop-tag">${escapeHtml(CATEGORY_LABELS[c.category] || c.category)}</span>${body}</li>`;
+    }).join('');
+
+    const historyHtml = card.filter(c => c.revealed).sort((a, b) => (a.round_revealed || 0) - (b.round_revealed || 0))
+        .map(c => `<li class="muted-note">Раунд ${c.round_revealed || '?'}: открыли «${escapeHtml(CATEGORY_LABELS[c.category] || c.category)}»${c.used ? ' · использовали' : ''}</li>`).join('');
+
+    el.innerHTML = `
+        <h2>Моя карточка</h2>
+        <ul class="prop-list">${itemsHtml}</ul>
         <p class="muted-note">Сумма баланса карточки: ${sum > 0 ? '+' : ''}${sum} (ориентир — ближе к 0, не строго)</p>
+
+        <h3 style="margin-top:14px;">Личные заметки</h3>
+        <p class="muted-note">Видны только вам, ведущий их не видит.</p>
+        <textarea id="myNotes" rows="3" style="width:100%; padding:10px; background:var(--void); border:1px solid #4a4e28; color:var(--paper); border-radius:4px; font-family:inherit;">${escapeHtml(note?.text || '')}</textarea>
+        <button class="btn btn-ghost btn-sm" style="margin-top:6px;" onclick="actionSaveNote(this)">Сохранить заметку</button>
+
+        ${historyHtml ? `<h3 style="margin-top:14px;">История ваших действий</h3><ul class="prop-list">${historyHtml}</ul>` : ''}
     `;
 }
 
-// [ИСПРАВЛЕНО 3] Функция открытия характеристики
+function toggleTargetPicker(cardId) {
+    const el = document.getElementById('targetPicker_' + cardId);
+    if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+
+async function actionUseSpecialCondition(cardId) {
+    const picker = document.getElementById('targetPicker_' + cardId);
+    const targets = picker ? Array.from(picker.querySelectorAll('input[type=checkbox]:checked')).map(cb => cb.value) : [];
+    const card = (state.myCardCache || []).find(c => c.id === cardId);
+    await supabaseClient.from('player_cards').update({ used: true, used_targets: targets }).eq('id', cardId);
+    const myName = (state.players.find(p => p.id === state.playerId) || {}).name || state.playerName;
+    const targetNames = targets.map(id => (state.players.find(p => p.id === id) || {}).name).filter(Boolean);
+    await dbInsertEvent(state.currentRoomCode, state.room.current_round, 'neutral',
+        myName + ' использовал(а) спецусловие: ' + (card ? card.text : '') + (targetNames.length ? ' (цель: ' + targetNames.join(', ') + ')' : ''),
+        targets[0] || null);
+    loadMyCard();
+    refreshEventsFeed();
+}
+
+async function actionSaveNote(btn) {
+    const ta = document.getElementById('myNotes');
+    if (!ta) return;
+    await dbSaveNote(state.currentRoomCode, state.playerId, ta.value);
+    if (btn) {
+        const original = btn.textContent;
+        btn.textContent = 'Сохранено ✓';
+        setTimeout(() => { btn.textContent = original; }, 1500);
+    }
+}
+
 async function actionRevealTrait(cardId) {
-    // В будущем здесь можно добавить проверку лимита открытий за раунд
-    await supabaseClient.from('player_cards').update({ revealed: true }).eq('id', cardId);
-    loadMyCard(); // Обновляем свою карточку
-    updateGameDynamic(); // Обновляем стол, чтобы все увидели открытую черту
+    const card = state.myCardCache || [];
+    const target = card.find(c => c.id === cardId);
+    if (!target) return;
+    const check = canRevealCategory(card, state.room, target.category);
+    if (!check.ok) return alert(check.reason);
+    await supabaseClient.from('player_cards').update({ revealed: true, round_revealed: state.room.current_round }).eq('id', cardId);
+    loadMyCard();
+    updateGameDynamic();
 }
 
 async function loadScenarioPanelGame() {
@@ -1243,18 +1373,25 @@ async function actionStartGame() {
 
 async function actionSaveSettings() {
     const rounds = parseInt(document.getElementById('setRounds').value) || 1;
-    const roundTypes = [];
+    const roundReveals = [];
     for (let i = 0; i < rounds; i++) {
-        const sel = document.getElementById('roundType_' + i);
-        roundTypes.push(sel ? sel.value : 'any');
+        const countEl = document.getElementById('roundCount_' + i);
+        const count = countEl ? Math.max(1, parseInt(countEl.value) || 1) : 1;
+        const slots = [];
+        for (let j = 0; j < count; j++) {
+            const sel = document.getElementById(`roundSlot_${i}_${j}`);
+            slots.push(sel ? sel.value : 'any');
+        }
+        roundReveals.push(slots);
     }
     const settings = {
         min_players: parseInt(document.getElementById('setMin').value) || 1,
         max_players: parseInt(document.getElementById('setMax').value) || 20,
         target_survivors: parseInt(document.getElementById('setSurvivors').value) || 1,
         rounds,
-        round_char_type: roundTypes,
+        round_reveals: roundReveals,
         phase_seconds: {
+            reveal: parseInt(document.getElementById('setReveal').value) || 60,
             discussion: parseInt(document.getElementById('setDiscussion').value) || 180,
             defense: parseInt(document.getElementById('setDefense').value) || 30,
             voting: parseInt(document.getElementById('setVoting').value) || 60
