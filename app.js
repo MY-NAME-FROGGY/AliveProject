@@ -732,12 +732,19 @@ function renderGameTable() {
     const nominees = room.nominees || [];
     const defenseIdx = room.defense_index || 0;
 
+    const nominations = room.nominations || {};
+    const myNomination = nominations[state.playerId];
+
     let phaseBody = '';
     if (room.current_phase === 'reveal') {
         phaseBody = `<p class="muted-note">Открытие характеристик по лимиту раунда появится на Шаге 6.</p>`;
     } else if (room.current_phase === 'nomination') {
         const names = nominees.map(id => escapeHtml((state.players.find(p => p.id === id) || {}).name || '?')).join(', ');
-        phaseBody = `<p>Выставлено: <strong>${names || 'пока никто'}</strong></p><p class="muted-note">Любой игрок может выставить другого кнопкой в списке ниже.</p>`;
+        const myTargetName = myNomination ? escapeHtml((state.players.find(p => p.id === myNomination) || {}).name || '?') : null;
+        phaseBody = `<p>Выставлено: <strong>${names || 'пока никто'}</strong></p>` +
+            (myTargetName
+                ? `<p class="muted-note">Вы выставили: ${myTargetName} (изменить нельзя)</p>`
+                : `<p class="muted-note">Каждый выставляет ровно одного другого игрока (кроме ведущего), кнопкой на его карточке ниже.</p>`);
     } else if (room.current_phase === 'defense') {
         const speaker = state.players.find(p => p.id === nominees[defenseIdx]);
         phaseBody = `<p>Сейчас выступает: <strong>${escapeHtml(speaker ? speaker.name : '—')}</strong> (${nominees.length ? defenseIdx + 1 : 0} из ${nominees.length})</p>`;
@@ -761,31 +768,39 @@ function renderGameTable() {
             ${isHost ? renderHostPhaseControls(room, hasTimer) : ''}
         </div>
 
-        <div class="panel">
-            <div class="section-title"><h2>Сценарий</h2>
-                <button class="btn btn-ghost btn-sm" onclick="toggleScenarioPanel()">Показать/скрыть</button>
+        <div class="game-layout">
+            <div class="game-sidebar">
+                <div class="panel">
+                    <div class="section-title"><h2>Сценарий</h2>
+                        ${isHost ? `<button class="btn btn-ghost btn-sm" onclick="actionToggleScenarioVisible()">${room.scenario_visible ? 'Скрыть у всех' : 'Показать всем'}</button>` : ''}
+                    </div>
+                    <div id="scenarioPanelGame" style="display:${room.scenario_visible ? 'block' : 'none'};"><p class="muted-note">Загрузка...</p></div>
+                    ${!isHost && !room.scenario_visible ? '<p class="muted-note">Ведущий пока не открыл сценарий.</p>' : ''}
+                </div>
+
+                <div class="panel">
+                    <div class="section-title"><h2>Бункер</h2>
+                        ${isHost ? `<button class="btn btn-ghost btn-sm" onclick="actionRevealBonus()">Открыть доп. свойство</button>` : ''}
+                    </div>
+                    <ul class="prop-list" id="bunkerRevealedList"></ul>
+                </div>
             </div>
-            <div id="scenarioPanelGame" style="display:none;"><p class="muted-note">Загрузка...</p></div>
-        </div>
 
-        <div class="panel">
-            <div class="section-title"><h2>Бункер</h2>
-                ${isHost ? `<button class="btn btn-ghost btn-sm" onclick="actionRevealBonus()">Открыть случайное доп. свойство</button>` : ''}
+            <div class="game-main">
+                <div class="panel">
+                    <h2>Стол</h2>
+                    <div id="hostStrip"></div>
+                    <div class="ptable-grid" id="gamePlayersList"></div>
+                </div>
+
+                <div class="panel" id="myCardPanel">
+                    <h2>Моя карточка (тест)</h2>
+                    <p class="muted-note">Загрузка...</p>
+                </div>
             </div>
-            <ul class="prop-list" id="bunkerRevealedList"></ul>
         </div>
 
-        <div class="panel">
-            <h2>Стол</h2>
-            <ul class="player-list" id="gamePlayersList"></ul>
-        </div>
-
-        <div class="panel" id="myCardPanel">
-            <h2>Моя карточка (тест)</h2>
-            <p class="muted-note">Загрузка...</p>
-        </div>
-
-        ${isHost ? `<button class="btn btn-ghost" onclick="actionResetToLobby()">Сбросить в лобби (для теста)</button>` : ''}
+        ${isHost ? `<button class="btn btn-ghost" style="margin-top:16px;" onclick="actionResetToLobby()">Сбросить в лобби (для теста)</button>` : ''}
     `;
 
     loadMyCard();
@@ -817,27 +832,53 @@ function updateGameDynamic() {
     if (!room) return;
     const nominees = room.nominees || [];
     const defenseIdx = room.defense_index || 0;
+    const nominations = room.nominations || {};
+    const myNomination = nominations[state.playerId];
+
+    // Ведущий — отдельной полосой над столом, его нельзя выставить (он не в общем списке ниже).
+    const hostP = state.players.find(p => p.id === room.host_id);
+    const hostEl = document.getElementById('hostStrip');
+    if (hostEl) {
+        hostEl.innerHTML = hostP ? `<div class="host-strip">
+            <div class="ptable-avatar"></div>
+            <div style="flex:1;"><span class="player-name">${escapeHtml(hostP.name)}${hostP.id === state.playerId ? ' (Вы)' : ''}</span></div>
+            <span class="host-badge">Ведущий</span>
+        </div>` : '';
+    }
 
     const listEl = document.getElementById('gamePlayersList');
     if (listEl) {
-        listEl.innerHTML = state.players.map(p => {
+        listEl.innerHTML = state.players.filter(p => p.id !== room.host_id).map(p => {
             const isMe = p.id === state.playerId;
             const isNominated = nominees.includes(p.id);
             const isSpeaking = room.current_phase === 'defense' && nominees[defenseIdx] === p.id;
-            const canNominate = room.current_phase === 'nomination' && !isMe;
-            return `<li${isSpeaking ? ' style="border:2px solid var(--hazard);"' : ''}>
-                <span>
-                    <span class="player-name">${escapeHtml(p.name)}${isMe ? ' (Вы)' : ''}</span>
-                    ${p.id === room.host_id ? '<span class="host-badge">Ведущий</span>' : ''}
+            // Можно выставлять, только пока сам ещё никого не выставил в этом раунде.
+            const canNominate = room.current_phase === 'nomination' && !isMe && !myNomination;
+            return `<div class="ptable-card${isSpeaking ? ' speaking' : ''}${isNominated ? ' nominated' : ''}">
+                <div class="ptable-card-head">
+                    <div class="ptable-avatar"></div>
+                    <div class="ptable-name">${escapeHtml(p.name)}${isMe ? ' (Вы)' : ''}</div>
+                </div>
+                <div class="ptable-card-body">
                     ${isNominated ? '<span class="badge badge-timeout">Выставлен(а)</span>' : ''}
-                </span>
-                ${canNominate ? `<button class="btn btn-ghost btn-sm" onclick="actionToggleNominate('${p.id}')">${isNominated ? 'Снять' : 'Выставить'}</button>` : ''}
-            </li>`;
+                    ${myNomination === p.id ? '<span class="muted-note">Ваш выбор</span>' : ''}
+                    ${canNominate ? `<button class="btn btn-ghost btn-sm" onclick="actionNominate('${p.id}')">Выставить</button>` : ''}
+                </div>
+            </div>`;
         }).join('');
     }
 
+    // Видимость сценария у всех — управляет только ведущий, здесь просто подтягиваем текущее состояние.
+    const scenPanel = document.getElementById('scenarioPanelGame');
+    if (scenPanel) scenPanel.style.display = room.scenario_visible ? 'block' : 'none';
+
     refreshBunkerList();
     syncGamePhaseTimerTicker();
+}
+
+// ---------- Видимость сценария в игре (только ведущий, синхронно для всех) ----------
+async function actionToggleScenarioVisible() {
+    await dbUpdateRoom(state.currentRoomCode, { scenario_visible: !state.room.scenario_visible });
 }
 
 async function loadMyCard() {
@@ -890,13 +931,6 @@ function refreshBunkerList() {
         : '<li class="muted-note" style="list-style:none;">Пока ничего не открыто.</li>';
 }
 
-function toggleScenarioPanel() {
-    const el = document.getElementById('scenarioPanelGame');
-    if (!el) return;
-    if (el.style.display === 'none') { el.style.display = 'block'; loadScenarioPanelGame(); }
-    else el.style.display = 'none';
-}
-
 // ---------- Управление таймером фазы (только ведущий) ----------
 async function hostStartTimer() {
     const seconds = phaseDuration(state.room.current_phase);
@@ -942,7 +976,7 @@ async function hostAdvancePhase() {
     }
 
     const idx = PHASE_SEQUENCE.indexOf(phase);
-    let nextPhase, nextRound = round, nextNominees = nominees;
+    let nextPhase, nextRound = round, nextNominees = nominees, nextNominations = room.nominations || {};
 
     if (idx === -1 || idx === PHASE_SEQUENCE.length - 1) {
         const totalRounds = room.settings?.rounds || 1;
@@ -955,6 +989,7 @@ async function hostAdvancePhase() {
         nextPhase = PHASE_SEQUENCE[0];
         nextRound = round + 1;
         nextNominees = [];
+        nextNominations = {};
     } else {
         nextPhase = PHASE_SEQUENCE[idx + 1];
     }
@@ -966,6 +1001,7 @@ async function hostAdvancePhase() {
         current_phase: nextPhase,
         current_round: nextRound,
         nominees: nextNominees,
+        nominations: nextNominations,
         defense_index: 0,
         phase_ends_at: ends,
         phase_running: seconds > 0,
@@ -973,14 +1009,19 @@ async function hostAdvancePhase() {
     });
 }
 
-// ---------- Выставление кандидатов (доступно всем игрокам в фазе "nomination") ----------
-async function actionToggleNominate(targetId) {
+// ---------- Выставление кандидатов (доступно всем игрокам, кроме ведущего, в фазе "nomination") ----------
+// Правила: ведущего выставить нельзя; каждый игрок выставляет ровно ОДНОГО другого игрока;
+// однажды выставив — отменить или сменить выбор нельзя (ни своё, ни чужое выставление).
+async function actionNominate(targetId) {
     const room = state.room;
     if (room.current_phase !== 'nomination') return;
     if (targetId === state.playerId) return alert('Нельзя выставить самого себя.');
-    let nominees = room.nominees || [];
-    nominees = nominees.includes(targetId) ? nominees.filter(id => id !== targetId) : [...nominees, targetId];
-    await dbUpdateRoom(state.currentRoomCode, { nominees });
+    if (targetId === room.host_id) return alert('Нельзя выставить ведущего.');
+    const nominations = { ...(room.nominations || {}) };
+    if (nominations[state.playerId]) return alert('Вы уже выставили игрока в этом раунде — изменить нельзя.');
+    nominations[state.playerId] = targetId;
+    const nominees = [...new Set(Object.values(nominations))];
+    await dbUpdateRoom(state.currentRoomCode, { nominations, nominees });
 }
 
 // ---------- Открытие случайного доп. свойства бункера (кнопка ведущего, п.3.2.2) ----------
@@ -1001,8 +1042,9 @@ async function actionResetToLobby() {
         phase: 'lobby', countdown_ends_at: null,
         current_round: 1, current_phase: 'reveal',
         phase_ends_at: null, phase_running: false, phase_paused_remaining: null,
-        nominees: [], defense_index: 0,
-        active_bonus_ids: [], revealed_bonus_ids: []
+        nominees: [], nominations: {}, defense_index: 0,
+        active_bonus_ids: [], revealed_bonus_ids: [],
+        scenario_visible: false
     });
     state.lastRenderedView = null;
     state.lastGameRenderKey = null;
