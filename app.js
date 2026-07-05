@@ -263,6 +263,26 @@ async function dbClearCards(roomCode) {
     if (error) console.error('Ошибка очистки player_cards:', error);
 }
 
+// ---------- Ивенты ведущего ----------
+async function dbFetchEvents(roomCode) {
+    const { data, error } = await supabaseClient.from('game_events')
+        .select('*').eq('room_code', roomCode).order('created_at', { ascending: false }).limit(30);
+    if (error) { console.error(error); return []; }
+    return data || [];
+}
+
+async function dbInsertEvent(roomCode, round, type, text, targetId) {
+    const { error } = await supabaseClient.from('game_events').insert({
+        room_code: roomCode, round, type, text, target_id: targetId || null
+    });
+    if (error) console.error('Ошибка записи события:', error);
+}
+
+async function dbClearEvents(roomCode) {
+    const { error } = await supabaseClient.from('game_events').delete().eq('room_code', roomCode);
+    if (error) console.error('Ошибка очистки game_events:', error);
+}
+
 // [ИСПРАВЛЕНО 1] Добавлен параметр hostId, чтобы пропускать ведущего
 async function generateCardsForRoom(roomCode, players, hostId) {
     const already = await dbCardsExist(roomCode);
@@ -777,6 +797,10 @@ function renderGameTable() {
                     </div>
                     <ul class="prop-list" id="bunkerRevealedList"></ul>
                 </div>
+                <div class="panel">
+                    <h2>Хроника событий</h2>
+                    <ul class="prop-list" id="eventsFeed"><li class="muted-note">Пока ничего не произошло.</li></ul>
+                </div>
             </div>
             <div class="game-main">
                 <div class="panel">
@@ -784,17 +808,54 @@ function renderGameTable() {
                     <div id="hostStrip"></div>
                     <div class="ptable-grid" id="gamePlayersList"></div>
                 </div>
-                <div class="panel" id="myCardPanel">
+                ${isHost ? renderHostToolsPanel(room) : `<div class="panel" id="myCardPanel">
                     <h2>Моя карточка</h2>
                     <p class="muted-note">Загрузка...</p>
-                </div>
+                </div>`}
             </div>
         </div>
         ${isHost ? `<button class="btn btn-ghost" style="margin-top:16px;" onclick="actionResetToLobby()">Сбросить в лобби (для теста)</button>` : ''}
     `;
-    loadMyCard();
+    if (!isHost) loadMyCard();
     loadScenarioPanelGame();
+    refreshEventsFeed();
     updateGameDynamic();
+}
+
+function renderHostToolsPanel(room) {
+    const targets = state.players.filter(p => p.id !== room.host_id);
+    return `<div class="panel" id="hostToolsPanel">
+        <h2>Панель ведущего</h2>
+        <p class="muted-note">Личной карточки у ведущего нет — вместо неё инструменты, которые влияют на ход игры.</p>
+
+        <h3 style="margin-top:14px;">Составить событие</h3>
+        <div class="settings-grid">
+            <div class="settings-field">
+                <label>Кому</label>
+                <select id="eventTarget">
+                    <option value="">Всем игрокам</option>
+                    ${targets.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('')}
+                </select>
+            </div>
+            <div class="settings-field">
+                <label>Тон</label>
+                <select id="eventType">
+                    <option value="neutral">Нейтральное</option>
+                    <option value="positive">Позитивное</option>
+                    <option value="negative">Негативное</option>
+                </select>
+            </div>
+        </div>
+        <input id="eventText" placeholder="Текст события, который увидят игроки...">
+        <button class="btn btn-primary btn-sm" onclick="actionSendEvent()">Отправить событие</button>
+
+        <h3 style="margin-top:16px;">Быстрые ивенты</h3>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button class="btn btn-ghost btn-sm" onclick="actionQuickEvent('find')">⚡ Внеплановая находка</button>
+            <button class="btn btn-ghost btn-sm" onclick="actionQuickEvent('incident')">💥 ЧП в бункере</button>
+        </div>
+        <p class="muted-note" style="margin-top:8px;">«Находка» досрочно открывает ещё одно бонусное свойство бункера. «ЧП» на 60 секунд отнимает возможность говорить в чате у случайного игрока.</p>
+    </div>`;
 }
 
 function renderHostPhaseControls(room, hasTimer) {
@@ -866,7 +927,59 @@ async function updateGameDynamic() {
     const scenPanel = document.getElementById('scenarioPanelGame');
     if (scenPanel) scenPanel.style.display = room.scenario_visible ? 'block' : 'none';
     refreshBunkerList();
+    refreshEventsFeed();
     syncGamePhaseTimerTicker();
+}
+
+function eventIcon(type) {
+    return type === 'positive' ? '🟢' : type === 'negative' ? '🔴' : '⚪';
+}
+
+async function refreshEventsFeed() {
+    const el = document.getElementById('eventsFeed');
+    if (!el) return;
+    const events = await dbFetchEvents(state.currentRoomCode);
+    if (events.length === 0) { el.innerHTML = '<li class="muted-note">Пока ничего не произошло.</li>'; return; }
+    el.innerHTML = events.map(e => {
+        const targetName = e.target_id ? (state.players.find(p => p.id === e.target_id) || {}).name : null;
+        return `<li>${eventIcon(e.type)} ${escapeHtml(e.text)}${targetName ? ` <span class="muted-note">(${escapeHtml(targetName)})</span>` : ''}</li>`;
+    }).join('');
+}
+
+// ---------- Действия ведущего: события ----------
+async function actionSendEvent() {
+    const textEl = document.getElementById('eventText');
+    const text = textEl.value.trim();
+    if (!text) return alert('Введите текст события.');
+    const type = document.getElementById('eventType').value;
+    const targetId = document.getElementById('eventTarget').value || null;
+    await dbInsertEvent(state.currentRoomCode, state.room.current_round, type, text, targetId);
+    textEl.value = '';
+    refreshEventsFeed();
+}
+
+async function actionQuickEvent(kind) {
+    const room = state.room;
+    const alivePlayers = state.players.filter(p => p.id !== room.host_id);
+    if (kind === 'find') {
+        const revealed = room.revealed_bonus_ids || [];
+        const active = room.active_bonus_ids || [];
+        const remaining = active.filter(id => !revealed.includes(id));
+        if (remaining.length === 0) return alert('Все доступные бонусные свойства бункера уже открыты.');
+        const pick = remaining[Math.floor(Math.random() * remaining.length)];
+        await dbUpdateRoom(state.currentRoomCode, { revealed_bonus_ids: [...revealed, pick] });
+        await dbInsertEvent(state.currentRoomCode, room.current_round, 'positive',
+            'Пока шло обсуждение, один из выживших обнаружил в дальнем углу бункера ещё один тайник — досрочно открыто дополнительное свойство бункера.', null);
+        state.room.revealed_bonus_ids = [...revealed, pick];
+        refreshBunkerList();
+    } else if (kind === 'incident') {
+        if (alivePlayers.length === 0) return;
+        const victim = alivePlayers[Math.floor(Math.random() * alivePlayers.length)];
+        await dbTimeoutPlayer(state.currentRoomCode, victim.id, state.playerId, 60);
+        await dbInsertEvent(state.currentRoomCode, room.current_round, 'negative',
+            victim.name + ' получил(а) лёгкую травму при ЧП в бункере и не может писать в чат следующую минуту.', victim.id);
+    }
+    refreshEventsFeed();
 }
 
 async function actionToggleScenarioVisible() {
@@ -1052,6 +1165,7 @@ async function actionRevealBonus() {
 async function actionResetToLobby() {
     stopGamePhaseTick();
     await dbClearCards(state.currentRoomCode);
+    await dbClearEvents(state.currentRoomCode);
     await dbUpdateRoom(state.currentRoomCode, {
         phase: 'lobby', countdown_ends_at: null, current_round: 1, current_phase: 'reveal',
         phase_ends_at: null, phase_running: false, phase_paused_remaining: null,
