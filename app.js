@@ -32,9 +32,6 @@ const CATEGORY_LABELS = {
 };
 const CATEGORY_LIST = Object.keys(CATEGORY_LABELS);
 
-// Порядок фаз внутри раунда (Шаг 5).
-// durationKey указывает, из какого поля settings.phase_seconds брать длительность таймера;
-// null означает, что у фазы нет автотаймера — ведущий переключает её вручную, когда готов.
 const PHASE_SEQUENCE = ['reveal', 'discussion', 'nomination', 'defense', 'voting', 'vote_result', 'bunker_reveal'];
 const PHASE_META = {
     reveal:        { label: 'Открытие раунда',     icon: '🃏', color: '#5b6b48', durationKey: null },
@@ -46,6 +43,7 @@ const PHASE_META = {
     bunker_reveal: { label: 'Открытие бункера',     icon: '🔓', color: '#4a4e28', durationKey: null },
     awaiting_verdict: { label: 'Раунды завершены',  icon: '⏳', color: '#8a6b1d', durationKey: null }
 };
+
 function phaseDuration(phaseKey) {
     const key = PHASE_META[phaseKey]?.durationKey;
     if (!key) return 0;
@@ -59,10 +57,10 @@ const state = {
     room: null,
     players: [],
     chat: [],
-    view: 'home',              // home | lobby | catalog | scenarioDetail | game
+    view: 'home',
     lastRenderedView: null,
     catalog: [],
-    viewingScenario: null,      // { scenario, base:[], bonus:[] }
+    viewingScenario: null,
     pollInterval: null,
     countdownTick: null,
     lastSeenSettings: null,
@@ -71,6 +69,7 @@ const state = {
     gamePhaseTick: null,
     gameScenario: null
 };
+
 localStorage.setItem('playerId', state.playerId);
 
 function saveRoomCode(code) {
@@ -91,10 +90,7 @@ function genCode() {
 
 function defaultSettings() {
     return {
-        min_players: 2,
-        max_players: 12,
-        target_survivors: 3,
-        rounds: 6,
+        min_players: 2, max_players: 12, target_survivors: 3, rounds: 6,
         round_char_type: Array(6).fill('any'),
         phase_seconds: { discussion: 180, defense: 30, voting: 60 },
         private_chat_enabled: false
@@ -112,6 +108,7 @@ async function dbCreateRoom(hostName) {
         code, host_id: state.playerId, phase: 'lobby', settings: defaultSettings()
     });
     if (roomErr) throw roomErr;
+    
     const { error: playerErr } = await supabaseClient.from('players').insert({
         id: state.playerId, room_code: code, name: hostName, is_ready: false
     });
@@ -120,11 +117,13 @@ async function dbCreateRoom(hostName) {
 }
 
 async function dbJoinRoom(code, name) {
-    const { data: room, error: roomErr } = await supabaseClient.from('rooms').select('*').eq('code', code).maybeSingle();
+    const { data: room, error: roomErr } = await supabaseClient.from('rooms').select('').eq('code', code).maybeSingle();
     if (roomErr || !room) throw new Error('Комната не найдена. Проверьте код.');
     if (room.phase !== 'lobby') throw new Error('Игра уже началась, присоединиться нельзя.');
-    const { data: players, error: playersErr } = await supabaseClient.from('players').select('*').eq('room_code', code);
+    
+    const { data: players, error: playersErr } = await supabaseClient.from('players').select('').eq('room_code', code);
     if (playersErr) throw playersErr;
+    
     const already = players.find(p => p.id === state.playerId);
     if (!already) {
         const max = room.settings?.max_players;
@@ -193,8 +192,8 @@ async function dbFetchScenarios() {
 }
 
 async function dbFetchScenarioDetail(id) {
-    const { data: scenario } = await supabaseClient.from('scenarios').select('*').eq('id', id).maybeSingle();
-    const { data: props } = await supabaseClient.from('bunker_properties').select('*').eq('scenario_id', id);
+    const { data: scenario } = await supabaseClient.from('scenarios').select('').eq('id', id).maybeSingle();
+    const { data: props } = await supabaseClient.from('bunker_properties').select('').eq('scenario_id', id);
     return {
         scenario,
         base: (props || []).filter(p => p.type === 'base'),
@@ -203,7 +202,7 @@ async function dbFetchScenarioDetail(id) {
 }
 
 // ==========================================
-// ГЕНЕРАЦИЯ КАРТОЧЕК ПЕРСОНАЖЕЙ (Шаг 4)
+// ГЕНЕРАЦИЯ КАРТОЧЕК ПЕРСОНАЖЕЙ
 // ==========================================
 function shuffleArray(arr) {
     const a = arr.slice();
@@ -214,8 +213,6 @@ function shuffleArray(arr) {
     return a;
 }
 
-// Собирает одну карточку: по одной записи на каждую из 10 категорий,
-// с балансом ~половина категорий "в плюс", половина "в минус" (value от -2 до +2).
 function generateBalancedCard(pool) {
     const categories = shuffleArray(CATEGORY_LIST);
     const half = Math.ceil(categories.length / 2);
@@ -223,13 +220,10 @@ function generateBalancedCard(pool) {
     const card = [];
     for (const cat of CATEGORY_LIST) {
         const items = pool.filter(p => p.category === cat);
-        if (items.length === 0) {
-            console.warn('В character_pool нет записей для категории:', cat);
-            continue;
-        }
+        if (items.length === 0) continue;
         const wantPositive = positiveCats.has(cat);
         let candidates = items.filter(p => wantPositive ? p.value >= 0 : p.value <= 0);
-        if (candidates.length === 0) candidates = items; // фолбэк на неполном тестовом наборе
+        if (candidates.length === 0) candidates = items;
         const pick = candidates[Math.floor(Math.random() * candidates.length)];
         card.push({ category: cat, pool_id: pick.id, text: pick.text, value: pick.value });
     }
@@ -250,13 +244,8 @@ async function dbCardsExist(roomCode) {
 
 async function dbInsertPlayerCard(roomCode, playerId, card) {
     const rows = card.map(c => ({
-        room_code: roomCode,
-        player_id: playerId,
-        category: c.category,
-        pool_id: c.pool_id,
-        text: c.text,
-        value: c.value,
-        revealed: false
+        room_code: roomCode, player_id: playerId, category: c.category,
+        pool_id: c.pool_id, text: c.text, value: c.value, revealed: false
     }));
     const { error } = await supabaseClient.from('player_cards').insert(rows);
     if (error) console.error('Ошибка записи карточки для игрока ' + playerId + ':', error);
@@ -274,24 +263,22 @@ async function dbClearCards(roomCode) {
     if (error) console.error('Ошибка очистки player_cards:', error);
 }
 
-// Вызывается хостом один раз, в момент перехода фазы starting -> game.
-async function generateCardsForRoom(roomCode, players) {
+// [ИСПРАВЛЕНО 1] Добавлен параметр hostId, чтобы пропускать ведущего
+async function generateCardsForRoom(roomCode, players, hostId) {
     const already = await dbCardsExist(roomCode);
-    if (already) return; // защита от повторной генерации на следующем тике поллинга
+    if (already) return;
     const pool = await dbFetchCharacterPool();
     if (pool.length === 0) {
         console.error('character_pool пуст — карточки не сгенерированы.');
         return;
     }
     for (const p of players) {
+        if (p.id === hostId) continue; // Пропускаем ведущего
         const card = generateBalancedCard(pool);
         await dbInsertPlayerCard(roomCode, p.id, card);
     }
 }
 
-// Выбирает 2-4 бонусных свойства бункера из восьми для конкретной партии.
-// Точную формулу "сколько именно от числа игроков" в документе не зафиксировали цифрами,
-// поэтому пока простое правило: <=5 игроков -> 2, 6-8 -> 3, 9+ -> 4. Легко поменять при желании.
 async function selectActiveBonusIds(scenarioId, playerCount) {
     if (!scenarioId) return [];
     const { bonus } = await dbFetchScenarioDetail(scenarioId);
@@ -311,6 +298,7 @@ function startPolling() {
     state.pollInterval = setInterval(pollTick, 2000);
     pollTick();
 }
+
 function stopPolling() {
     if (state.pollInterval) clearInterval(state.pollInterval);
     state.pollInterval = null;
@@ -335,8 +323,8 @@ async function pollTick() {
     }
     state.room = room;
     state.players = players;
-
     const isHost = room.host_id === state.playerId;
+
     if (isHost && room.phase === 'starting') {
         const notReady = players.find(p => !p.is_ready);
         if (notReady) {
@@ -344,26 +332,19 @@ async function pollTick() {
             alert('Старт отменён: ' + notReady.name + ' не готов(а).');
             room.phase = 'lobby';
         } else if (room.countdown_ends_at && new Date(room.countdown_ends_at) <= new Date()) {
-            await generateCardsForRoom(state.currentRoomCode, players);
+            // [ИСПРАВЛЕНО 1] Передаем host_id в генератор карт
+            await generateCardsForRoom(state.currentRoomCode, players, room.host_id);
             const activeBonusIds = await selectActiveBonusIds(room.scenario_id, players.length);
             await dbUpdateRoom(state.currentRoomCode, {
-                phase: 'game',
-                current_round: 1,
-                current_phase: 'reveal',
-                phase_ends_at: null,
-                phase_running: false,
-                phase_paused_remaining: null,
-                nominees: [],
-                defense_index: 0,
-                active_bonus_ids: activeBonusIds,
-                revealed_bonus_ids: []
+                phase: 'game', current_round: 1, current_phase: 'reveal',
+                phase_ends_at: null, phase_running: false, phase_paused_remaining: null,
+                nominees: [], defense_index: 0, active_bonus_ids: activeBonusIds, revealed_bonus_ids: []
             });
             room.phase = 'game';
         }
     }
 
     state.view = room.phase === 'game' ? 'game' : 'lobby';
-
     if (state.view === 'lobby') {
         state.chat = await dbFetchChat(state.currentRoomCode);
         if (state.lastRenderedView !== 'lobby') { renderLobby(); state.lastRenderedView = 'lobby'; }
@@ -426,7 +407,6 @@ function renderLobby() {
     const room = state.room;
     const isHost = room.host_id === state.playerId;
     const settings = room.settings || {};
-
     document.getElementById('app').innerHTML = `
         <h1>ОСТАТЬСЯ <span>В ЖИВЫХ</span></h1>
         <div class="hazard-strip"></div>
@@ -435,7 +415,6 @@ function renderLobby() {
             <h3>Код комнаты для друзей:</h3>
             <div class="code-box">${room.code}</div>
         </div>
-
         <div class="panel">
             <div class="section-title"><h2>Сценарий</h2>
                 ${isHost ? `<button class="btn btn-ghost btn-sm" onclick="openCatalog()">${room.scenario_id ? 'Сменить' : 'Выбрать'}</button>` : ''}
@@ -443,17 +422,14 @@ function renderLobby() {
             <p id="scenarioSummary">${room.scenario_id ? 'Загрузка...' : 'Сценарий ещё не выбран.'}</p>
             <div id="scenarioDetailBtn">${room.scenario_id ? `<button class="btn btn-ghost btn-sm" onclick="openScenarioDetail('${room.scenario_id}')">Подробнее</button>` : ''}</div>
         </div>
-
         <div class="panel" id="settingsPanel">
             <h2>Настройки игры</h2>
             <div id="settingsContent">${isHost ? renderSettingsEditable(settings) : renderSettingsReadonly(settings)}</div>
         </div>
-
         <div class="panel">
             <div class="section-title"><h2>Участники</h2><span id="playerCount" class="muted-note"></span></div>
             <ul class="player-list" id="playersList"></ul>
         </div>
-
         <div class="panel">
             <h2>Чат</h2>
             <div class="chat-box">
@@ -464,14 +440,12 @@ function renderLobby() {
                 </div>
             </div>
         </div>
-
         <div style="display:flex; gap:10px; margin-top:20px; flex-wrap:wrap;">
             <button class="btn btn-primary" id="readyToggleBtn" onclick="actionToggleReady()"></button>
             ${isHost ? `<button class="btn btn-danger" onclick="actionStartGame()">Начать игру</button>` : ''}
             <button class="btn btn-ghost" onclick="actionLeaveRoom()">← Выйти в меню</button>
         </div>
     `;
-
     if (room.scenario_id) loadScenarioSummary(room.scenario_id);
     if (isHost) regenerateRoundTypeInputs();
     state.lastSeenSettings = JSON.stringify(settings);
@@ -501,13 +475,15 @@ function renderSettingsEditable(s) {
 
 function renderSettingsReadonly(s) {
     const roundTypes = (s.round_char_type || []).map((t, i) => `Раунд ${i + 1}: ${t === 'any' ? 'любая' : (CATEGORY_LABELS[t] || t)}`).join(' · ');
-    return `<div class="readonly-settings">
-        Игроков: ${s.min_players ?? '?'}–${s.max_players ?? '?'} · Нужно выживших: ${s.target_survivors ?? '?'}<br>
-        Раундов: ${s.rounds ?? '?'}<br>
-        ${roundTypes ? '<div class="muted-note">' + roundTypes + '</div>' : ''}
-        Фазы: обсуждение ${s.phase_seconds?.discussion ?? '?'}с · оправдание ${s.phase_seconds?.defense ?? '?'}с · голосование ${s.phase_seconds?.voting ?? '?'}с<br>
-        Личные чаты: ${s.private_chat_enabled ? 'включены' : 'выключены'}
-    </div>`;
+    return `
+        <div class="readonly-settings">
+            Игроков: ${s.min_players ?? '?'}–${s.max_players ?? '?'} · Нужно выживших: ${s.target_survivors ?? '?'}<br>
+            Раундов: ${s.rounds ?? '?'}<br>
+            ${roundTypes ? '<div class="muted-note">' + roundTypes + '</div>' : ''}
+            Фазы: обсуждение ${s.phase_seconds?.discussion ?? '?'}с · оправдание ${s.phase_seconds?.defense ?? '?'}с · голосование ${s.phase_seconds?.voting ?? '?'}с<br>
+            Личные чаты: ${s.private_chat_enabled ? 'включены' : 'выключены'}
+        </div>
+    `;
 }
 
 function regenerateRoundTypeInputs() {
@@ -519,10 +495,10 @@ function regenerateRoundTypeInputs() {
     let html = '';
     for (let i = 0; i < rounds; i++) {
         const val = current[i] || 'any';
-        html += `<div class="round-type-row"><span>Раунд ${i + 1}</span><select id="roundType_${i}">` +
-            `<option value="any" ${val === 'any' ? 'selected' : ''}>Любая</option>` +
-            CATEGORY_LIST.map(c => `<option value="${c}" ${val === c ? 'selected' : ''}>${CATEGORY_LABELS[c]}</option>`).join('') +
-            `</select></div>`;
+        html += `<div class="round-type-row"><span>Раунд ${i + 1}</span><select id="roundType_${i}">`;
+        html += `<option value="any" ${val === 'any' ? 'selected' : ''}>Любая</option>`;
+        html += CATEGORY_LIST.map(c => `<option value="${c}" ${val === c ? 'selected' : ''}>${CATEGORY_LABELS[c]}</option>`).join('');
+        html += `</select></div>`;
     }
     container.innerHTML = html;
 }
@@ -532,21 +508,18 @@ function updateLobbyDynamic() {
     const room = state.room;
     const isHost = room.host_id === state.playerId;
     const me = state.players.find(p => p.id === state.playerId);
-
     const listEl = document.getElementById('playersList');
     if (listEl) listEl.innerHTML = state.players.map(p => renderPlayerRow(p, room, isHost)).join('');
-
+    
     const countEl = document.getElementById('playerCount');
     if (countEl) countEl.innerText = state.players.length + (room.settings?.max_players ? ' / ' + room.settings.max_players : '');
-
+    
     const readyBtn = document.getElementById('readyToggleBtn');
     if (readyBtn && me) {
         readyBtn.textContent = me.is_ready ? 'Я готов ✔ (нажми, чтобы отменить)' : 'Не готов (нажми, когда будешь готов)';
         readyBtn.className = 'btn ' + (me.is_ready ? 'btn-ghost' : 'btn-primary');
     }
 
-    // Живое обновление настроек и сценария — только у не-хоста.
-    // У хоста форму настроек не трогаем, иначе он потеряет несохранённые правки во время ввода.
     if (!isHost) {
         const settingsJson = JSON.stringify(room.settings || {});
         if (state.lastSeenSettings !== settingsJson) {
@@ -568,7 +541,6 @@ function updateLobbyDynamic() {
             }
         }
     }
-
     renderChatMessages();
     renderPhaseBanner();
 }
@@ -577,20 +549,24 @@ function renderPlayerRow(p, room, isHost) {
     const isMe = p.id === state.playerId;
     const isHostRow = p.id === room.host_id;
     const timedOut = p.timeout_until && new Date(p.timeout_until) > new Date();
-    return `<li>
-        <span>
-            <span class="player-name">${escapeHtml(p.name)}${isMe ? ' (Вы)' : ''}</span>
-            ${isHostRow ? '<span class="host-badge">Ведущий</span>' : ''}
-            <span class="badge ${p.is_ready ? 'badge-ready' : 'badge-notready'}">${p.is_ready ? 'Готов' : 'Не готов'}</span>
-            ${p.is_muted ? '<span class="badge badge-muted">Мут</span>' : ''}
-            ${timedOut ? '<span class="badge badge-timeout">Таймаут</span>' : ''}
-        </span>
-        ${isHost && !isMe ? `<span class="player-actions">
-            <button class="btn btn-ghost btn-sm" onclick="actionToggleMute('${p.id}', ${p.is_muted})">${p.is_muted ? 'Размутить' : 'Мут'}</button>
-            <button class="btn btn-ghost btn-sm" onclick="actionTimeout('${p.id}', '${escapeHtml(p.name)}')">Таймаут</button>
-            <button class="btn btn-danger btn-sm" onclick="actionKick('${p.id}', '${escapeHtml(p.name)}')">Кик</button>
-        </span>` : ''}
-    </li>`;
+    return `
+        <li>
+            <span>
+                <span class="player-name">${escapeHtml(p.name)}${isMe ? ' (Вы)' : ''}</span>
+                ${isHostRow ? '<span class="host-badge">Ведущий</span>' : ''}
+                <span class="badge ${p.is_ready ? 'badge-ready' : 'badge-notready'}">${p.is_ready ? 'Готов' : 'Не готов'}</span>
+                ${p.is_muted ? '<span class="badge badge-muted">Мут</span>' : ''}
+                ${timedOut ? '<span class="badge badge-timeout">Таймаут</span>' : ''}
+            </span>
+            ${isHost && !isMe ? `
+                <span class="player-actions">
+                    <button class="btn btn-ghost btn-sm" onclick="actionToggleMute('${p.id}', ${p.is_muted})">${p.is_muted ? 'Размутить' : 'Мут'}</button>
+                    <button class="btn btn-ghost btn-sm" onclick="actionTimeout('${p.id}', '${escapeHtml(p.name)}')">Таймаут</button>
+                    <button class="btn btn-danger btn-sm" onclick="actionKick('${p.id}', '${escapeHtml(p.name)}')">Кик</button>
+                </span>
+            ` : ''}
+        </li>
+    `;
 }
 
 function renderChatMessages() {
@@ -623,6 +599,7 @@ function startCountdownTick() {
         numEl.textContent = left;
     }, 250);
 }
+
 function stopCountdownTick() {
     if (state.countdownTick) clearInterval(state.countdownTick);
     state.countdownTick = null;
@@ -638,10 +615,12 @@ function startGamePhaseTick() {
         el.textContent = left + ' сек.';
     }, 250);
 }
+
 function stopGamePhaseTick() {
     if (state.gamePhaseTick) clearInterval(state.gamePhaseTick);
     state.gamePhaseTick = null;
 }
+
 function syncGamePhaseTimerTicker() {
     const room = state.room;
     stopGamePhaseTick();
@@ -721,7 +700,25 @@ function backToLobby() {
 }
 
 // ==========================================
-// РЕНДЕР: ИГРОВОЙ СТОЛ И ДВИЖОК ФАЗ (Шаг 5)
+// [ИСПРАВЛЕНО 4] ЗАГРУЗКА ОТКРЫТЫХ ХАРАКТЕРИСТИК
+// ==========================================
+async function fetchRevealedTraits() {
+    const { data, error } = await supabaseClient.from('player_cards')
+        .select('player_id, category, text')
+        .eq('room_code', state.currentRoomCode)
+        .eq('revealed', true);
+    if (error) return {};
+    
+    const traitsByPlayer = {};
+    data.forEach(c => {
+        if (!traitsByPlayer[c.player_id]) traitsByPlayer[c.player_id] = [];
+        traitsByPlayer[c.player_id].push({ cat: CATEGORY_LABELS[c.category], text: c.text });
+    });
+    return traitsByPlayer;
+}
+
+// ==========================================
+// РЕНДЕР: ИГРОВОЙ СТОЛ И ДВИЖОК ФАЗ
 // ==========================================
 function renderGameTable() {
     stopCountdownTick();
@@ -731,13 +728,12 @@ function renderGameTable() {
     const hasTimer = !!meta.durationKey;
     const nominees = room.nominees || [];
     const defenseIdx = room.defense_index || 0;
-
     const nominations = room.nominations || {};
     const myNomination = nominations[state.playerId];
 
     let phaseBody = '';
     if (room.current_phase === 'reveal') {
-        phaseBody = `<p class="muted-note">Открытие характеристик по лимиту раунда появится на Шаге 6.</p>`;
+        phaseBody = `<p class="muted-note">Откройте характеристики, которые можно раскрыть в этом раунде, нажав кнопку "Открыть" на своей карточке.</p>`;
     } else if (room.current_phase === 'nomination') {
         const names = nominees.map(id => escapeHtml((state.players.find(p => p.id === id) || {}).name || '?')).join(', ');
         const myTargetName = myNomination ? escapeHtml((state.players.find(p => p.id === myNomination) || {}).name || '?') : null;
@@ -760,14 +756,12 @@ function renderGameTable() {
     document.getElementById('app').innerHTML = `
         <h1>ОСТАТЬСЯ <span>В ЖИВЫХ</span></h1>
         <div class="hazard-strip"></div>
-
         <div class="panel" style="border-left:6px solid ${meta.color}; text-align:center;">
             <div style="font-size:14px; letter-spacing:0.08em; text-transform:uppercase; color:${meta.color};">${meta.icon} ${escapeHtml(meta.label)} · Раунд ${room.current_round || 1}</div>
             ${hasTimer ? `<div style="font-size:28px; font-weight:bold; margin-top:6px;" id="gamePhaseCountdown"></div>` : ''}
             ${phaseBody}
             ${isHost ? renderHostPhaseControls(room, hasTimer) : ''}
         </div>
-
         <div class="game-layout">
             <div class="game-sidebar">
                 <div class="panel">
@@ -777,7 +771,6 @@ function renderGameTable() {
                     <div id="scenarioPanelGame" style="display:${room.scenario_visible ? 'block' : 'none'};"><p class="muted-note">Загрузка...</p></div>
                     ${!isHost && !room.scenario_visible ? '<p class="muted-note">Ведущий пока не открыл сценарий.</p>' : ''}
                 </div>
-
                 <div class="panel">
                     <div class="section-title"><h2>Бункер</h2>
                         ${isHost ? `<button class="btn btn-ghost btn-sm" onclick="actionRevealBonus()">Открыть доп. свойство</button>` : ''}
@@ -785,24 +778,20 @@ function renderGameTable() {
                     <ul class="prop-list" id="bunkerRevealedList"></ul>
                 </div>
             </div>
-
             <div class="game-main">
                 <div class="panel">
                     <h2>Стол</h2>
                     <div id="hostStrip"></div>
                     <div class="ptable-grid" id="gamePlayersList"></div>
                 </div>
-
                 <div class="panel" id="myCardPanel">
-                    <h2>Моя карточка (тест)</h2>
+                    <h2>Моя карточка</h2>
                     <p class="muted-note">Загрузка...</p>
                 </div>
             </div>
         </div>
-
         ${isHost ? `<button class="btn btn-ghost" style="margin-top:16px;" onclick="actionResetToLobby()">Сбросить в лобби (для теста)</button>` : ''}
     `;
-
     loadMyCard();
     loadScenarioPanelGame();
     updateGameDynamic();
@@ -812,22 +801,18 @@ function renderHostPhaseControls(room, hasTimer) {
     let timerButtons = '';
     if (hasTimer) {
         if (room.phase_running) {
-            timerButtons = `<button class="btn btn-ghost btn-sm" onclick="hostPauseTimer()">Пауза</button>
-                <button class="btn btn-ghost btn-sm" onclick="hostStopTimer()">Стоп</button>`;
+            timerButtons = `<button class="btn btn-ghost btn-sm" onclick="hostPauseTimer()">Пауза</button> <button class="btn btn-ghost btn-sm" onclick="hostStopTimer()">Стоп</button>`;
         } else if (room.phase_paused_remaining) {
-            timerButtons = `<button class="btn btn-primary btn-sm" onclick="hostResumeTimer()">Возобновить</button>
-                <button class="btn btn-ghost btn-sm" onclick="hostStopTimer()">Стоп</button>`;
+            timerButtons = `<button class="btn btn-primary btn-sm" onclick="hostResumeTimer()">Возобновить</button> <button class="btn btn-ghost btn-sm" onclick="hostStopTimer()">Стоп</button>`;
         } else {
             timerButtons = `<button class="btn btn-primary btn-sm" onclick="hostStartTimer()">Старт таймера</button>`;
         }
     }
-    return `<div style="margin-top:12px; display:flex; gap:8px; justify-content:center; flex-wrap:wrap;">
-        ${timerButtons}
-        <button class="btn btn-danger btn-sm" onclick="hostAdvancePhase()">Далее →</button>
-    </div>`;
+    return `<div style="margin-top:12px; display:flex; gap:8px; justify-content:center; flex-wrap:wrap;"> ${timerButtons} <button class="btn btn-danger btn-sm" onclick="hostAdvancePhase()">Далее →</button> </div>`;
 }
 
-function updateGameDynamic() {
+// [ИСПРАВЛЕНО 4] Функция стала async, чтобы подтягивать открытые характеристики
+async function updateGameDynamic() {
     const room = state.room;
     if (!room) return;
     const nominees = room.nominees || [];
@@ -835,7 +820,9 @@ function updateGameDynamic() {
     const nominations = room.nominations || {};
     const myNomination = nominations[state.playerId];
 
-    // Ведущий — отдельной полосой над столом, его нельзя выставить (он не в общем списке ниже).
+    // Подтягиваем открытые характеристики всех игроков
+    const revealedTraits = await fetchRevealedTraits();
+
     const hostP = state.players.find(p => p.id === room.host_id);
     const hostEl = document.getElementById('hostStrip');
     if (hostEl) {
@@ -852,14 +839,22 @@ function updateGameDynamic() {
             const isMe = p.id === state.playerId;
             const isNominated = nominees.includes(p.id);
             const isSpeaking = room.current_phase === 'defense' && nominees[defenseIdx] === p.id;
-            // Можно выставлять, только пока сам ещё никого не выставил в этом раунде.
-            const canNominate = room.current_phase === 'nomination' && !isMe && !myNomination;
+            
+            // [ИСПРАВЛЕНО 5] Ведущий не может выставлять, но на всякий случай проверяем и здесь
+            const canNominate = room.current_phase === 'nomination' && !isMe && !myNomination && state.playerId !== room.host_id;
+
+            // Рендерим открытые характеристики
+            const traitsHtml = (revealedTraits[p.id] || []).map(t => 
+                `<div style="font-size:11px; color:#b7b190; margin-top:2px;"><b>${t.cat}:</b> ${escapeHtml(t.text)}</div>`
+            ).join('');
+
             return `<div class="ptable-card${isSpeaking ? ' speaking' : ''}${isNominated ? ' nominated' : ''}">
                 <div class="ptable-card-head">
                     <div class="ptable-avatar"></div>
                     <div class="ptable-name">${escapeHtml(p.name)}${isMe ? ' (Вы)' : ''}</div>
                 </div>
                 <div class="ptable-card-body">
+                    ${traitsHtml}
                     ${isNominated ? '<span class="badge badge-timeout">Выставлен(а)</span>' : ''}
                     ${myNomination === p.id ? '<span class="muted-note">Ваш выбор</span>' : ''}
                     ${canNominate ? `<button class="btn btn-ghost btn-sm" onclick="actionNominate('${p.id}')">Выставить</button>` : ''}
@@ -868,31 +863,49 @@ function updateGameDynamic() {
         }).join('');
     }
 
-    // Видимость сценария у всех — управляет только ведущий, здесь просто подтягиваем текущее состояние.
     const scenPanel = document.getElementById('scenarioPanelGame');
     if (scenPanel) scenPanel.style.display = room.scenario_visible ? 'block' : 'none';
-
     refreshBunkerList();
     syncGamePhaseTimerTicker();
 }
 
-// ---------- Видимость сценария в игре (только ведущий, синхронно для всех) ----------
 async function actionToggleScenarioVisible() {
     await dbUpdateRoom(state.currentRoomCode, { scenario_visible: !state.room.scenario_visible });
 }
 
+// [ИСПРАВЛЕНО 3] Полностью переписана логика отображения карточки и добавлено открытие
 async function loadMyCard() {
     const card = await dbFetchMyCard(state.currentRoomCode, state.playerId);
     const el = document.getElementById('myCardPanel');
     if (!el) return;
+    
     if (card.length === 0) {
-        el.innerHTML = '<h2>Моя карточка (тест)</h2><p class="muted-note">Карточка не найдена (генерация ещё не завершилась или пуст character_pool).</p>';
+        el.innerHTML = `<h2>Моя карточка</h2><p class="muted-note">Карточка не найдена (генерация ещё не завершилась или пуст character_pool).</p>`;
         return;
     }
+    
     const sum = card.reduce((s, c) => s + (c.value || 0), 0);
-    el.innerHTML = `<h2>Моя карточка (тест)</h2>
-        <ul class="prop-list">${card.map(c => `<li><span class="prop-tag">${escapeHtml(CATEGORY_LABELS[c.category] || c.category)}</span>${escapeHtml(c.text)} <span class="muted-note">(${c.value > 0 ? '+' : ''}${c.value})</span></li>`).join('')}</ul>
-        <p class="muted-note">Сумма баланса карточки: ${sum > 0 ? '+' : ''}${sum} (ориентир — ближе к 0, не строго)</p>`;
+    el.innerHTML = `<h2>Моя карточка</h2>
+        <ul class="prop-list">${card.map(c => {
+            const isRevealed = c.revealed;
+            const text = isRevealed ? escapeHtml(c.text) : '<i class="muted-note">Скрыто</i>';
+            const btn = !isRevealed ? `<button class="btn btn-sm btn-primary" style="margin-top:5px;" onclick="actionRevealTrait('${c.id}')">Открыть</button>` : '';
+            return `<li>
+                <span class="prop-tag">${escapeHtml(CATEGORY_LABELS[c.category] || c.category)}</span>
+                ${text} <span class="muted-note">(${c.value > 0 ? '+' : ''}${c.value})</span>
+                ${btn}
+            </li>`;
+        }).join('')}</ul>
+        <p class="muted-note">Сумма баланса карточки: ${sum > 0 ? '+' : ''}${sum} (ориентир — ближе к 0, не строго)</p>
+    `;
+}
+
+// [ИСПРАВЛЕНО 3] Функция открытия характеристики
+async function actionRevealTrait(cardId) {
+    // В будущем здесь можно добавить проверку лимита открытий за раунд
+    await supabaseClient.from('player_cards').update({ revealed: true }).eq('id', cardId);
+    loadMyCard(); // Обновляем свою карточку
+    updateGameDynamic(); // Обновляем стол, чтобы все увидели открытую черту
 }
 
 async function loadScenarioPanelGame() {
@@ -916,7 +929,10 @@ function renderScenarioPanelGameContent() {
         <p>${escapeHtml(scenario.catastrophe_description)}</p>
         <h4 style="margin-top:10px;">Стартовые свойства</h4>
         <ul class="prop-list">${base.map(p => `<li><span class="prop-tag">База</span>${escapeHtml(p.text)}</li>`).join('')}</ul>
-        ${revealedBonus.length ? `<h4 style="margin-top:10px;">Открытые доп. свойства</h4><ul class="prop-list">${revealedBonus.map(p => `<li class="bonus"><span class="prop-tag">Бонус</span>${escapeHtml(p.text)}</li>`).join('')}</ul>` : ''}
+        ${revealedBonus.length ? `
+            <h4 style="margin-top:10px;">Открытые доп. свойства</h4>
+            <ul class="prop-list">${revealedBonus.map(p => `<li class="bonus"><span class="prop-tag">Бонус</span>${escapeHtml(p.text)}</li>`).join('')}</ul>
+        ` : ''}
     `;
 }
 
@@ -931,30 +947,33 @@ function refreshBunkerList() {
         : '<li class="muted-note" style="list-style:none;">Пока ничего не открыто.</li>';
 }
 
-// ---------- Управление таймером фазы (только ведущий) ----------
+// ---------- Управление таймером фазы ----------
 async function hostStartTimer() {
     const seconds = phaseDuration(state.room.current_phase);
     if (seconds <= 0) return;
     const ends = new Date(Date.now() + seconds * 1000).toISOString();
     await dbUpdateRoom(state.currentRoomCode, { phase_ends_at: ends, phase_running: true, phase_paused_remaining: null });
 }
+
 async function hostPauseTimer() {
     const room = state.room;
     if (!room.phase_running || !room.phase_ends_at) return;
     const remaining = Math.max(0, Math.round((new Date(room.phase_ends_at) - Date.now()) / 1000));
     await dbUpdateRoom(state.currentRoomCode, { phase_running: false, phase_ends_at: null, phase_paused_remaining: remaining });
 }
+
 async function hostResumeTimer() {
     const remaining = state.room.phase_paused_remaining;
     if (!remaining) return;
     const ends = new Date(Date.now() + remaining * 1000).toISOString();
     await dbUpdateRoom(state.currentRoomCode, { phase_running: true, phase_ends_at: ends, phase_paused_remaining: null });
 }
+
 async function hostStopTimer() {
     await dbUpdateRoom(state.currentRoomCode, { phase_running: false, phase_ends_at: null, phase_paused_remaining: null });
 }
 
-// ---------- Переход между фазами (только ведущий) ----------
+// ---------- Переход между фазами ----------
 async function hostAdvancePhase() {
     const room = state.room;
     const phase = room.current_phase;
@@ -962,22 +981,17 @@ async function hostAdvancePhase() {
     const nominees = room.nominees || [];
     const defenseIdx = room.defense_index || 0;
 
-    // Внутри "оправдательной речи" сначала проходим всех выставленных по очереди.
     if (phase === 'defense' && defenseIdx < nominees.length - 1) {
         const seconds = phaseDuration('defense');
         const ends = seconds > 0 ? new Date(Date.now() + seconds * 1000).toISOString() : null;
         await dbUpdateRoom(state.currentRoomCode, {
-            defense_index: defenseIdx + 1,
-            phase_ends_at: ends,
-            phase_running: seconds > 0,
-            phase_paused_remaining: null
+            defense_index: defenseIdx + 1, phase_ends_at: ends, phase_running: seconds > 0, phase_paused_remaining: null
         });
         return;
     }
 
     const idx = PHASE_SEQUENCE.indexOf(phase);
     let nextPhase, nextRound = round, nextNominees = nominees, nextNominations = room.nominations || {};
-
     if (idx === -1 || idx === PHASE_SEQUENCE.length - 1) {
         const totalRounds = room.settings?.rounds || 1;
         if (round >= totalRounds) {
@@ -996,35 +1010,35 @@ async function hostAdvancePhase() {
 
     const seconds = phaseDuration(nextPhase);
     const ends = seconds > 0 ? new Date(Date.now() + seconds * 1000).toISOString() : null;
-
     await dbUpdateRoom(state.currentRoomCode, {
-        current_phase: nextPhase,
-        current_round: nextRound,
-        nominees: nextNominees,
-        nominations: nextNominations,
-        defense_index: 0,
-        phase_ends_at: ends,
-        phase_running: seconds > 0,
-        phase_paused_remaining: null
+        current_phase: nextPhase, current_round: nextRound, nominees: nextNominees, nominations: nextNominations,
+        defense_index: 0, phase_ends_at: ends, phase_running: seconds > 0, phase_paused_remaining: null
     });
 }
 
-// ---------- Выставление кандидатов (доступно всем игрокам, кроме ведущего, в фазе "nomination") ----------
-// Правила: ведущего выставить нельзя; каждый игрок выставляет ровно ОДНОГО другого игрока;
-// однажды выставив — отменить или сменить выбор нельзя (ни своё, ни чужое выставление).
+// ---------- Выставление кандидатов ----------
+// [ИСПРАВЛЕНО 5] Добавлена жесткая проверка на ведущего
 async function actionNominate(targetId) {
     const room = state.room;
+    
+    // ЖЕСТКАЯ ЗАЩИТА: Ведущий не игрок
+    if (state.playerId === room.host_id) {
+        return alert('Ведущий не может участвовать в голосованиях и выставлениях.');
+    }
+
     if (room.current_phase !== 'nomination') return;
     if (targetId === state.playerId) return alert('Нельзя выставить самого себя.');
     if (targetId === room.host_id) return alert('Нельзя выставить ведущего.');
+    
     const nominations = { ...(room.nominations || {}) };
     if (nominations[state.playerId]) return alert('Вы уже выставили игрока в этом раунде — изменить нельзя.');
+    
     nominations[state.playerId] = targetId;
     const nominees = [...new Set(Object.values(nominations))];
     await dbUpdateRoom(state.currentRoomCode, { nominations, nominees });
 }
 
-// ---------- Открытие случайного доп. свойства бункера (кнопка ведущего, п.3.2.2) ----------
+// ---------- Открытие случайного доп. свойства бункера ----------
 async function actionRevealBonus() {
     const room = state.room;
     const active = room.active_bonus_ids || [];
@@ -1039,12 +1053,10 @@ async function actionResetToLobby() {
     stopGamePhaseTick();
     await dbClearCards(state.currentRoomCode);
     await dbUpdateRoom(state.currentRoomCode, {
-        phase: 'lobby', countdown_ends_at: null,
-        current_round: 1, current_phase: 'reveal',
+        phase: 'lobby', countdown_ends_at: null, current_round: 1, current_phase: 'reveal',
         phase_ends_at: null, phase_running: false, phase_paused_remaining: null,
         nominees: [], nominations: {}, defense_index: 0,
-        active_bonus_ids: [], revealed_bonus_ids: [],
-        scenario_visible: false
+        active_bonus_ids: [], revealed_bonus_ids: [], scenario_visible: false
     });
     state.lastRenderedView = null;
     state.lastGameRenderKey = null;
@@ -1167,6 +1179,7 @@ async function actionSendChat() {
     state.chat = await dbFetchChat(state.currentRoomCode);
     renderChatMessages();
 }
+
 function handleChatKey(e) { if (e.key === 'Enter') actionSendChat(); }
 
 // ==========================================
@@ -1189,4 +1202,5 @@ async function init() {
     }
     renderHome();
 }
+
 init();
