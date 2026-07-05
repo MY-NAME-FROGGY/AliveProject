@@ -4,7 +4,7 @@ body{background:radial-gradient(ellipse at top,#1f2317 0%,var(--void) 60%);color
 h1,h2,h3{font-family: 'Arial Black', sans-serif; text-transform:uppercase; letter-spacing:0.04em; margin-bottom:10px;}
 h1 { color: var(--hazard); font-size: 2.5rem; text-align: center; margin-bottom: 20px;}
 h1 span { color: var(--paper); }
-.wrap{max-width:920px;margin:0 auto;}
+.wrap{max-width:1080px;margin:0 auto;}
 .hazard-strip{height:10px;background:repeating-linear-gradient(135deg,var(--hazard) 0 18px,#211d13 18px 36px);border-radius:2px;margin:14px 0 22px;}
 .panel{background:var(--void-2);border:1px solid #33361f;border-radius:6px;padding:20px;margin-bottom:16px;}
 .btn{display:inline-block;font-family:'Arial Black',sans-serif;text-transform:uppercase;letter-spacing:0.05em;font-size:14px;font-weight:600;padding:12px 20px;border-radius:4px;border:none;cursor:pointer; transition: 0.2s;}
@@ -50,3 +50,24 @@ input::placeholder { color: #888; }
 .countdown-banner{background:var(--hazard);color:var(--ink);text-align:center;padding:16px;border-radius:6px;margin-bottom:16px;font-family:'Arial Black',sans-serif;font-size:20px;text-transform:uppercase;}
 .section-title{display:flex;justify-content:space-between;align-items:center;}
 .muted-note{color:#888;font-size:13px;}
+
+/* Шаг 5: раскладка игрового стола */
+.game-layout{display:grid; grid-template-columns:280px 1fr; gap:16px; align-items:start;}
+.game-sidebar{display:flex; flex-direction:column;}
+.game-main{display:flex; flex-direction:column;}
+@media (max-width: 760px){
+    .game-layout{grid-template-columns:1fr;}
+}
+
+.host-strip{background:var(--void); border:2px solid #9b7fd4; border-radius:6px; padding:10px 14px; margin-bottom:14px; display:flex; align-items:center; gap:10px;}
+
+.ptable-grid{display:grid; grid-template-columns:repeat(auto-fill, minmax(150px,1fr)); gap:10px;}
+.ptable-card{background:var(--void); border:1px solid #4a4e28; border-radius:10px; padding:10px; display:flex; flex-direction:column; gap:8px; min-height:120px;}
+.ptable-card.speaking{border-color:var(--hazard); box-shadow:0 0 0 2px var(--hazard) inset;}
+.ptable-card.nominated{border-color:var(--danger);}
+.ptable-card-head{display:flex; justify-content:space-between; align-items:center; gap:8px;}
+.ptable-avatar{width:32px; height:32px; border-radius:50%; background:#2a2d1c; border:1px solid #4a4e28; flex-shrink:0;}
+.ptable-name{font-weight:600; font-size:13px; text-align:right; overflow-wrap:anywhere;}
+.ptable-card-body{flex:1; display:flex; flex-direction:column; gap:6px; align-items:flex-start;}
+
+#myCardPanel{min-height:220px;}
