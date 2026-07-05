@@ -59,6 +59,8 @@ input::placeholder { color: #888; }
 .prop-list li{padding:10px;background:var(--void);margin:6px 0;border-radius:4px;border-left:3px solid var(--moss);}
 .prop-list li.bonus{border-left-color:var(--hazard);}
 .prop-tag{font-size:10px;text-transform:uppercase;color:var(--hazard);display:block;margin-bottom:3px;}
+.prop-list li.special-unused{border-left-color:#777; filter:grayscale(0.7); opacity:0.9;}
+.prop-list li.special-used{border-left-color:#e0c04a; background:#2a2410;}
 
 .chat-box{display:flex;flex-direction:column;height:280px;}
 .chat-messages{flex:1;overflow-y:auto;background:var(--void);border-radius:4px;padding:10px;margin-bottom:10px;}
