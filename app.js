@@ -67,7 +67,8 @@ const state = {
     lastSeenScenarioId: undefined,
     lastGameRenderKey: null,
     gamePhaseTick: null,
-    gameScenario: null
+    gameScenario: null,
+    gameChatRecipient: null
 };
 
 localStorage.setItem('playerId', state.playerId);
@@ -160,6 +161,20 @@ async function dbSendChat(code, text) {
     await supabaseClient.from('chat_messages').insert({ room_code: code, sender_id: state.playerId, text });
 }
 
+async function dbFetchPrivateChat(roomCode, myId, otherId) {
+    const { data, error } = await supabaseClient.from('chat_messages')
+        .select('*').eq('room_code', roomCode)
+        .or(`and(sender_id.eq.${myId},recipient_id.eq.${otherId}),and(sender_id.eq.${otherId},recipient_id.eq.${myId})`)
+        .order('created_at', { ascending: true }).limit(100);
+    if (error) { console.error(error); return []; }
+    return data || [];
+}
+
+async function dbSendPrivateChat(roomCode, senderId, recipientId, text) {
+    const { error } = await supabaseClient.from('chat_messages').insert({ room_code: roomCode, sender_id: senderId, recipient_id: recipientId, text });
+    if (error) console.error('Ошибка отправки личного сообщения:', error);
+}
+
 async function dbUpdateRoom(code, patch) {
     const { error } = await supabaseClient.from('rooms').update(patch).eq('code', code);
     if (error) console.error(error);
@@ -167,6 +182,33 @@ async function dbUpdateRoom(code, patch) {
 
 async function dbSetReady(code, ready) {
     await supabaseClient.from('players').update({ is_ready: ready }).eq('id', state.playerId).eq('room_code', code);
+}
+
+// ---------- Выбор места за столом (номер сохраняется у игрока и виден в лобби и в игре) ----------
+async function dbSetSeat(roomCode, playerId, seatNumber) {
+    const { error } = await supabaseClient.from('players').update({ seat_number: seatNumber }).eq('id', playerId).eq('room_code', roomCode);
+    if (error) console.error('Ошибка выбора места:', error);
+}
+
+async function actionPickSeat(seatNumber) {
+    const taken = state.players.find(p => p.seat_number === seatNumber && p.id !== state.playerId);
+    if (taken) return alert('Это место уже занято.');
+    await dbSetSeat(state.currentRoomCode, state.playerId, seatNumber);
+}
+
+function renderSeatPicker(room) {
+    const maxSeats = room.settings?.max_players || 12;
+    let html = '<div class="seat-grid">';
+    for (let i = 1; i <= maxSeats; i++) {
+        const occupant = state.players.find(p => p.seat_number === i);
+        const isMe = occupant && occupant.id === state.playerId;
+        const label = occupant ? escapeHtml(occupant.name) : ('Место ' + i);
+        const cls = isMe ? 'btn-primary' : 'btn-ghost';
+        const disabled = (occupant && !isMe) ? 'disabled' : '';
+        html += `<button class="btn btn-sm ${cls}" ${disabled} onclick="actionPickSeat(${i})">${i}. ${label}</button>`;
+    }
+    html += '</div>';
+    return html;
 }
 
 async function dbKickPlayer(code, targetId, actorId) {
@@ -285,9 +327,9 @@ async function dbFetchEvents(roomCode) {
     return data || [];
 }
 
-async function dbInsertEvent(roomCode, round, type, text, targetId) {
+async function dbInsertEvent(roomCode, round, type, text, targetId, isPrivate) {
     const { error } = await supabaseClient.from('game_events').insert({
-        room_code: roomCode, round, type, text, target_id: targetId || null
+        room_code: roomCode, round, type, text, target_id: targetId || null, private: !!isPrivate
     });
     if (error) console.error('Ошибка записи события:', error);
 }
@@ -369,10 +411,15 @@ async function pollTick() {
             // [ИСПРАВЛЕНО 1] Передаем host_id в генератор карт
             await generateCardsForRoom(state.currentRoomCode, players, room.host_id);
             const activeBonusIds = await selectActiveBonusIds(room.scenario_id, players.length);
+            // [ФИКС] room 1-й фазы "reveal" никогда не получал таймер, даже если он задан в настройках —
+            // отсюда впечатление, что настройки таймеров вообще не влияют на игру.
+            const revealSeconds = phaseDuration('reveal');
+            const revealEnds = revealSeconds > 0 ? new Date(Date.now() + revealSeconds * 1000).toISOString() : null;
             await dbUpdateRoom(state.currentRoomCode, {
                 phase: 'game', current_round: 1, current_phase: 'reveal',
-                phase_ends_at: null, phase_running: false, phase_paused_remaining: null,
-                nominees: [], defense_index: 0, active_bonus_ids: activeBonusIds, revealed_bonus_ids: []
+                phase_ends_at: revealEnds, phase_running: revealSeconds > 0, phase_paused_remaining: null,
+                nominees: [], nominations: {}, defense_index: 0, reveal_index: 0,
+                active_bonus_ids: activeBonusIds, revealed_bonus_ids: []
             });
             room.phase = 'game';
         }
@@ -384,7 +431,7 @@ async function pollTick() {
         if (state.lastRenderedView !== 'lobby') { renderLobby(); state.lastRenderedView = 'lobby'; }
         else updateLobbyDynamic();
     } else if (state.view === 'game') {
-        const key = room.current_phase + '|' + room.current_round + '|' + (room.defense_index || 0);
+        const key = room.current_phase + '|' + room.current_round + '|' + (room.defense_index || 0) + '|' + (room.reveal_index || 0);
         if (state.lastRenderedView !== 'game' || state.lastGameRenderKey !== key) {
             state.lastGameRenderKey = key;
             renderGameTable();
@@ -454,11 +501,16 @@ function renderLobby() {
                 ${isHost ? `<button class="btn btn-ghost btn-sm" onclick="openCatalog()">${room.scenario_id ? 'Сменить' : 'Выбрать'}</button>` : ''}
             </div>
             <p id="scenarioSummary">${room.scenario_id ? 'Загрузка...' : 'Сценарий ещё не выбран.'}</p>
-            <div id="scenarioDetailBtn">${room.scenario_id ? `<button class="btn btn-ghost btn-sm" onclick="openScenarioDetail('${room.scenario_id}')">Подробнее</button>` : ''}</div>
+            <div id="scenarioDetailBtn">${(room.scenario_id && isHost) ? `<button class="btn btn-ghost btn-sm" onclick="openScenarioDetail('${room.scenario_id}')">Подробнее</button>` : ''}</div>
         </div>
         <div class="panel" id="settingsPanel">
             <h2>Настройки игры</h2>
             <div id="settingsContent">${isHost ? renderSettingsEditable(settings) : renderSettingsReadonly(settings)}</div>
+        </div>
+        <div class="panel">
+            <h2>Выбор места</h2>
+            <p class="muted-note">Номер места будет виден рядом с вашим именем в лобби и в игре.</p>
+            <div id="seatPicker">${renderSeatPicker(room)}</div>
         </div>
         <div class="panel">
             <div class="section-title"><h2>Участники</h2><span id="playerCount" class="muted-note"></span></div>
@@ -571,7 +623,10 @@ function updateLobbyDynamic() {
     const me = state.players.find(p => p.id === state.playerId);
     const listEl = document.getElementById('playersList');
     if (listEl) listEl.innerHTML = state.players.map(p => renderPlayerRow(p, room, isHost)).join('');
-    
+
+    const seatEl = document.getElementById('seatPicker');
+    if (seatEl) seatEl.innerHTML = renderSeatPicker(room);
+
     const countEl = document.getElementById('playerCount');
     if (countEl) countEl.innerText = state.players.length + (room.settings?.max_players ? ' / ' + room.settings.max_players : '');
     
@@ -591,14 +646,11 @@ function updateLobbyDynamic() {
         if (state.lastSeenScenarioId !== room.scenario_id) {
             state.lastSeenScenarioId = room.scenario_id;
             const summaryEl = document.getElementById('scenarioSummary');
-            const btnWrap = document.getElementById('scenarioDetailBtn');
             if (room.scenario_id) {
                 if (summaryEl) summaryEl.textContent = 'Загрузка...';
                 loadScenarioSummary(room.scenario_id);
-                if (btnWrap) btnWrap.innerHTML = `<button class="btn btn-ghost btn-sm" onclick="openScenarioDetail('${room.scenario_id}')">Подробнее</button>`;
             } else {
                 if (summaryEl) summaryEl.textContent = 'Сценарий ещё не выбран.';
-                if (btnWrap) btnWrap.innerHTML = '';
             }
         }
     }
@@ -613,7 +665,7 @@ function renderPlayerRow(p, room, isHost) {
     return `
         <li>
             <span>
-                <span class="player-name">${escapeHtml(p.name)}${isMe ? ' (Вы)' : ''}</span>
+                <span class="player-name">${p.seat_number ? '№' + p.seat_number + ' ' : ''}${escapeHtml(p.name)}${isMe ? ' (Вы)' : ''}</span>
                 ${isHostRow ? '<span class="host-badge">Ведущий</span>' : ''}
                 <span class="badge ${p.is_ready ? 'badge-ready' : 'badge-notready'}">${p.is_ready ? 'Готов' : 'Не готов'}</span>
                 ${p.is_muted ? '<span class="badge badge-muted">Мут</span>' : ''}
@@ -722,6 +774,7 @@ function renderCatalog() {
 }
 
 async function openScenarioDetail(id) {
+    if (!state.room || state.room.host_id !== state.playerId) return;
     stopPolling();
     state.view = 'scenarioDetail';
     state.viewingScenario = await dbFetchScenarioDetail(id);
@@ -794,7 +847,14 @@ function renderGameTable() {
 
     let phaseBody = '';
     if (room.current_phase === 'reveal') {
-        phaseBody = `<p class="muted-note">Откройте характеристики, которые можно раскрыть в этом раунде, нажав кнопку "Открыть" на своей карточке.</p>`;
+        const revealOrder = state.players.filter(p => p.id !== room.host_id);
+        const revealIdx = room.reveal_index || 0;
+        const active = revealOrder[revealIdx];
+        const isMyTurn = active && active.id === state.playerId;
+        phaseBody = `<p>Сейчас открывает характеристики: <strong>${escapeHtml(active ? active.name : '—')}</strong> (${revealOrder.length ? revealIdx + 1 : 0} из ${revealOrder.length})</p>` +
+            (isMyTurn
+                ? '<p class="muted-note">Ваш ход — откройте характеристики на своей карточке ниже.</p>'
+                : '<p class="muted-note">Дождитесь своей очереди, чтобы открыть характеристики.</p>');
     } else if (room.current_phase === 'nomination') {
         const names = nominees.map(id => escapeHtml((state.players.find(p => p.id === id) || {}).name || '?')).join(', ');
         const myTargetName = myNomination ? escapeHtml((state.players.find(p => p.id === myNomination) || {}).name || '?') : null;
@@ -840,7 +900,7 @@ function renderGameTable() {
                 </div>
                 <div class="panel">
                     <h2>Хроника событий</h2>
-                    <ul class="prop-list" id="eventsFeed"><li class="muted-note">Пока ничего не произошло.</li></ul>
+                    <ul class="prop-list events-feed" id="eventsFeed"><li class="muted-note">Пока ничего не произошло.</li></ul>
                 </div>
             </div>
             <div class="game-main">
@@ -855,12 +915,34 @@ function renderGameTable() {
                 </div>`}
             </div>
         </div>
+        ${renderGameChatPanel(room)}
         ${isHost ? `<button class="btn btn-ghost" style="margin-top:16px;" onclick="actionResetToLobby()">Сбросить в лобби (для теста)</button>` : ''}
     `;
     if (!isHost) loadMyCard();
     loadScenarioPanelGame();
     refreshEventsFeed();
+    refreshGameChat();
     updateGameDynamic();
+}
+
+function renderGameChatPanel(room) {
+    const privateEnabled = !!room.settings?.private_chat_enabled;
+    const others = state.players.filter(p => p.id !== state.playerId);
+    return `<div class="panel">
+        <div class="section-title"><h2>Чат</h2>
+            ${privateEnabled ? `<select id="gameChatRecipient" onchange="switchGameChatRecipient()" style="width:auto; margin:0;">
+                <option value="">Общий чат</option>
+                ${others.map(p => `<option value="${p.id}" ${state.gameChatRecipient === p.id ? 'selected' : ''}>${escapeHtml(p.name)}${p.id === room.host_id ? ' (Ведущий)' : ''}</option>`).join('')}
+            </select>` : ''}
+        </div>
+        <div class="chat-box">
+            <div class="chat-messages" id="gameChatMessages"></div>
+            <div class="chat-input-row">
+                <input id="gameChatInput" placeholder="Сообщение..." onkeydown="handleGameChatKey(event)">
+                <button class="btn btn-primary btn-sm" onclick="actionSendGameChat()">➤</button>
+            </div>
+        </div>
+    </div>`;
 }
 
 function renderHostToolsPanel(room) {
@@ -919,6 +1001,9 @@ async function updateGameDynamic() {
     if (!room) return;
     const nominees = room.nominees || [];
     const defenseIdx = room.defense_index || 0;
+    const revealIdx = room.reveal_index || 0;
+    const revealOrder = state.players.filter(p => p.id !== room.host_id);
+    const revealActiveId = (revealOrder[revealIdx] || {}).id;
     const nominations = room.nominations || {};
     const myNomination = nominations[state.playerId];
 
@@ -930,7 +1015,7 @@ async function updateGameDynamic() {
     if (hostEl) {
         hostEl.innerHTML = hostP ? `<div class="host-strip">
             <div class="ptable-avatar"></div>
-            <div style="flex:1;"><span class="player-name">${escapeHtml(hostP.name)}${hostP.id === state.playerId ? ' (Вы)' : ''}</span></div>
+            <div style="flex:1;"><span class="player-name">${hostP.seat_number ? '№' + hostP.seat_number + ' ' : ''}${escapeHtml(hostP.name)}${hostP.id === state.playerId ? ' (Вы)' : ''}</span></div>
             <span class="host-badge">Ведущий</span>
         </div>` : '';
     }
@@ -940,7 +1025,8 @@ async function updateGameDynamic() {
         listEl.innerHTML = state.players.filter(p => p.id !== room.host_id).map(p => {
             const isMe = p.id === state.playerId;
             const isNominated = nominees.includes(p.id);
-            const isSpeaking = room.current_phase === 'defense' && nominees[defenseIdx] === p.id;
+            const isSpeaking = (room.current_phase === 'defense' && nominees[defenseIdx] === p.id) ||
+                                (room.current_phase === 'reveal' && revealActiveId === p.id);
             
             // [ИСПРАВЛЕНО 5] Ведущий не может выставлять, но на всякий случай проверяем и здесь
             const canNominate = room.current_phase === 'nomination' && !isMe && !myNomination && state.playerId !== room.host_id;
@@ -953,7 +1039,7 @@ async function updateGameDynamic() {
             return `<div class="ptable-card${isSpeaking ? ' speaking' : ''}${isNominated ? ' nominated' : ''}">
                 <div class="ptable-card-head">
                     <div class="ptable-avatar"></div>
-                    <div class="ptable-name">${escapeHtml(p.name)}${isMe ? ' (Вы)' : ''}</div>
+                    <div class="ptable-name">${p.seat_number ? '№' + p.seat_number + ' ' : ''}${escapeHtml(p.name)}${isMe ? ' (Вы)' : ''}</div>
                 </div>
                 <div class="ptable-card-body">
                     ${traitsHtml}
@@ -969,8 +1055,46 @@ async function updateGameDynamic() {
     if (scenPanel) scenPanel.style.display = room.scenario_visible ? 'block' : 'none';
     refreshBunkerList();
     refreshEventsFeed();
+    refreshGameChat();
     syncGamePhaseTimerTicker();
 }
+
+// ---------- Чат в игре: общий + личные каналы ----------
+function switchGameChatRecipient() {
+    const sel = document.getElementById('gameChatRecipient');
+    state.gameChatRecipient = sel ? (sel.value || null) : null;
+    refreshGameChat();
+}
+
+async function refreshGameChat() {
+    const el = document.getElementById('gameChatMessages');
+    if (!el) return;
+    const recipientId = state.gameChatRecipient;
+    const msgs = recipientId
+        ? await dbFetchPrivateChat(state.currentRoomCode, state.playerId, recipientId)
+        : await dbFetchChat(state.currentRoomCode);
+    const nameOf = id => (state.players.find(p => p.id === id) || {}).name || 'Бывший игрок';
+    el.innerHTML = msgs.map(m => `<div class="chat-message"><span class="sender">${escapeHtml(nameOf(m.sender_id))}:</span> ${escapeHtml(m.text)}</div>`).join('');
+    el.scrollTop = el.scrollHeight;
+}
+
+async function actionSendGameChat() {
+    const input = document.getElementById('gameChatInput');
+    if (!input) return;
+    const text = input.value.trim();
+    if (!text) return;
+    const me = state.players.find(p => p.id === state.playerId);
+    if (me && me.is_muted) return alert('Вы в муте, писать нельзя.');
+    if (me && me.timeout_until && new Date(me.timeout_until) > new Date()) return alert('Вы в таймауте.');
+    input.value = '';
+    if (state.gameChatRecipient) {
+        await dbSendPrivateChat(state.currentRoomCode, state.playerId, state.gameChatRecipient, text);
+    } else {
+        await dbSendChat(state.currentRoomCode, text);
+    }
+    refreshGameChat();
+}
+function handleGameChatKey(e) { if (e.key === 'Enter') actionSendGameChat(); }
 
 function eventIcon(type) {
     return type === 'positive' ? '🟢' : type === 'negative' ? '🔴' : '⚪';
@@ -979,11 +1103,15 @@ function eventIcon(type) {
 async function refreshEventsFeed() {
     const el = document.getElementById('eventsFeed');
     if (!el) return;
+    const room = state.room;
+    const isHost = room && room.host_id === state.playerId;
     const events = await dbFetchEvents(state.currentRoomCode);
-    if (events.length === 0) { el.innerHTML = '<li class="muted-note">Пока ничего не произошло.</li>'; return; }
-    el.innerHTML = events.map(e => {
+    // [Шаг 6, п.2.1] Личное сообщение ведущего конкретному игроку видят только он сам и ведущий.
+    const visible = events.filter(e => !e.private || isHost || e.target_id === state.playerId);
+    if (visible.length === 0) { el.innerHTML = '<li class="muted-note">Пока ничего не произошло.</li>'; return; }
+    el.innerHTML = visible.map(e => {
         const targetName = e.target_id ? (state.players.find(p => p.id === e.target_id) || {}).name : null;
-        return `<li>${eventIcon(e.type)} ${escapeHtml(e.text)}${targetName ? ` <span class="muted-note">(${escapeHtml(targetName)})</span>` : ''}</li>`;
+        return `<li>${eventIcon(e.type)} ${escapeHtml(e.text)}${targetName ? ` <span class="muted-note">(${escapeHtml(targetName)})</span>` : ''}${e.private ? ' <span class="muted-note">🔒 лично</span>' : ''}</li>`;
     }).join('');
 }
 
@@ -994,7 +1122,8 @@ async function actionSendEvent() {
     if (!text) return alert('Введите текст события.');
     const type = document.getElementById('eventType').value;
     const targetId = document.getElementById('eventTarget').value || null;
-    await dbInsertEvent(state.currentRoomCode, state.room.current_round, type, text, targetId);
+    // Сообщение конкретному игроку считается личным и не видно остальным.
+    await dbInsertEvent(state.currentRoomCode, state.room.current_round, type, text, targetId, !!targetId);
     textEl.value = '';
     refreshEventsFeed();
 }
@@ -1010,15 +1139,16 @@ async function actionQuickEvent(kind) {
         const pick = remaining[Math.floor(Math.random() * remaining.length)];
         await dbUpdateRoom(state.currentRoomCode, { revealed_bonus_ids: [...revealed, pick] });
         await dbInsertEvent(state.currentRoomCode, room.current_round, 'positive',
-            'Пока шло обсуждение, один из выживших обнаружил в дальнем углу бункера ещё один тайник — досрочно открыто дополнительное свойство бункера.', null);
+            'Пока шло обсуждение, один из выживших обнаружил в дальнем углу бункера ещё один тайник — досрочно открыто дополнительное свойство бункера.', null, false);
         state.room.revealed_bonus_ids = [...revealed, pick];
         refreshBunkerList();
     } else if (kind === 'incident') {
         if (alivePlayers.length === 0) return;
         const victim = alivePlayers[Math.floor(Math.random() * alivePlayers.length)];
         await dbTimeoutPlayer(state.currentRoomCode, victim.id, state.playerId, 60);
+        // Публичное событие (все должны понимать, почему этот игрок временно не пишет в чат).
         await dbInsertEvent(state.currentRoomCode, room.current_round, 'negative',
-            victim.name + ' получил(а) лёгкую травму при ЧП в бункере и не может писать в чат следующую минуту.', victim.id);
+            victim.name + ' получил(а) лёгкую травму при ЧП в бункере и не может писать в чат следующую минуту.', victim.id, false);
     }
     refreshEventsFeed();
 }
@@ -1059,22 +1189,29 @@ async function loadMyCard() {
     }
 
     const room = state.room;
-    const sum = card.reduce((s, c) => s + (c.value || 0), 0);
     const note = await dbFetchNote(state.currentRoomCode, state.playerId);
+    const revealOrder = state.players.filter(p => p.id !== room.host_id);
+    const isMyRevealTurn = room.current_phase === 'reveal' && (revealOrder[room.reveal_index || 0] || {}).id === state.playerId;
 
+    // [Шаг 6, п.1.2] Свой текст видно всегда; числовую "ценность" характеристики игрок не видит никогда.
     const itemsHtml = card.map(c => {
         const isSpecial = c.category === 'special_condition';
-        let liClass = '', body;
+        let liClass = '', extra = '';
         if (!c.revealed) {
-            const check = canRevealCategory(card, room, c.category);
-            body = check.ok
-                ? `<i class="muted-note">Скрыто</i> <button class="btn btn-sm btn-primary" style="margin-top:5px;" onclick="actionRevealTrait('${c.id}')">Открыть</button>`
-                : `<i class="muted-note">Скрыто</i> <div class="muted-note" style="font-size:11px; margin-top:3px;">${escapeHtml(check.reason)}</div>`;
+            if (room.current_phase !== 'reveal') {
+                extra = '<div class="muted-note" style="font-size:11px; margin-top:3px;">(не открыто остальным — доступно только в фазе «Открытие раунда»)</div>';
+            } else if (!isMyRevealTurn) {
+                extra = '<div class="muted-note" style="font-size:11px; margin-top:3px;">(не открыто остальным — сейчас не ваш ход)</div>';
+            } else {
+                const check = canRevealCategory(card, room, c.category);
+                extra = check.ok
+                    ? `<button class="btn btn-sm btn-primary" style="margin-top:5px;" onclick="actionRevealTrait('${c.id}')">Открыть остальным</button>`
+                    : `<div class="muted-note" style="font-size:11px; margin-top:3px;">${escapeHtml(check.reason)}</div>`;
+            }
         } else if (isSpecial && !c.used) {
             liClass = ' special-unused';
             const others = state.players.filter(p => p.id !== state.playerId && p.id !== room.host_id);
-            body = `${escapeHtml(c.text)} <span class="muted-note">(${c.value > 0 ? '+' : ''}${c.value})</span>
-                <div style="margin-top:6px;">
+            extra = `<div style="margin-top:6px;">
                     <button class="btn btn-sm btn-primary" onclick="toggleTargetPicker('${c.id}')">Использовать</button>
                     <div id="targetPicker_${c.id}" style="display:none; margin-top:6px;">
                         ${others.length ? others.map(p =>
@@ -1086,11 +1223,11 @@ async function loadMyCard() {
         } else if (isSpecial && c.used) {
             liClass = ' special-used';
             const targetNames = (c.used_targets || []).map(id => (state.players.find(p => p.id === id) || {}).name).filter(Boolean);
-            body = `${escapeHtml(c.text)} <span class="muted-note">(использовано${targetNames.length ? ' · цель: ' + escapeHtml(targetNames.join(', ')) : ''})</span>`;
+            extra = `<span class="muted-note">(использовано${targetNames.length ? ' · цель: ' + escapeHtml(targetNames.join(', ')) : ''})</span>`;
         } else {
-            body = `${escapeHtml(c.text)} <span class="muted-note">(${c.value > 0 ? '+' : ''}${c.value})</span>`;
+            extra = c.revealed ? '<span class="muted-note">(открыто остальным)</span>' : '';
         }
-        return `<li class="${liClass}"><span class="prop-tag">${escapeHtml(CATEGORY_LABELS[c.category] || c.category)}</span>${body}</li>`;
+        return `<li class="${liClass}"><span class="prop-tag">${escapeHtml(CATEGORY_LABELS[c.category] || c.category)}</span>${escapeHtml(c.text)} ${extra}</li>`;
     }).join('');
 
     const historyHtml = card.filter(c => c.revealed).sort((a, b) => (a.round_revealed || 0) - (b.round_revealed || 0))
@@ -1099,7 +1236,6 @@ async function loadMyCard() {
     el.innerHTML = `
         <h2>Моя карточка</h2>
         <ul class="prop-list">${itemsHtml}</ul>
-        <p class="muted-note">Сумма баланса карточки: ${sum > 0 ? '+' : ''}${sum} (ориентир — ближе к 0, не строго)</p>
 
         <h3 style="margin-top:14px;">Личные заметки</h3>
         <p class="muted-note">Видны только вам, ведущий их не видит.</p>
@@ -1124,7 +1260,7 @@ async function actionUseSpecialCondition(cardId) {
     const targetNames = targets.map(id => (state.players.find(p => p.id === id) || {}).name).filter(Boolean);
     await dbInsertEvent(state.currentRoomCode, state.room.current_round, 'neutral',
         myName + ' использовал(а) спецусловие: ' + (card ? card.text : '') + (targetNames.length ? ' (цель: ' + targetNames.join(', ') + ')' : ''),
-        targets[0] || null);
+        targets[0] || null, false);
     loadMyCard();
     refreshEventsFeed();
 }
@@ -1141,12 +1277,17 @@ async function actionSaveNote(btn) {
 }
 
 async function actionRevealTrait(cardId) {
+    const room = state.room;
+    if (room.current_phase !== 'reveal') return alert('Открытие характеристик доступно только в фазе «Открытие раунда».');
+    const revealOrder = state.players.filter(p => p.id !== room.host_id);
+    const active = revealOrder[room.reveal_index || 0];
+    if (!active || active.id !== state.playerId) return alert('Сейчас не ваш ход.');
     const card = state.myCardCache || [];
     const target = card.find(c => c.id === cardId);
     if (!target) return;
-    const check = canRevealCategory(card, state.room, target.category);
+    const check = canRevealCategory(card, room, target.category);
     if (!check.ok) return alert(check.reason);
-    await supabaseClient.from('player_cards').update({ revealed: true, round_revealed: state.room.current_round }).eq('id', cardId);
+    await supabaseClient.from('player_cards').update({ revealed: true, round_revealed: room.current_round }).eq('id', cardId);
     loadMyCard();
     updateGameDynamic();
 }
@@ -1223,6 +1364,17 @@ async function hostAdvancePhase() {
     const round = room.current_round || 1;
     const nominees = room.nominees || [];
     const defenseIdx = room.defense_index || 0;
+    const revealIdx = room.reveal_index || 0;
+    const revealOrder = state.players.filter(p => p.id !== room.host_id);
+
+    if (phase === 'reveal' && revealIdx < revealOrder.length - 1) {
+        const seconds = phaseDuration('reveal');
+        const ends = seconds > 0 ? new Date(Date.now() + seconds * 1000).toISOString() : null;
+        await dbUpdateRoom(state.currentRoomCode, {
+            reveal_index: revealIdx + 1, phase_ends_at: ends, phase_running: seconds > 0, phase_paused_remaining: null
+        });
+        return;
+    }
 
     if (phase === 'defense' && defenseIdx < nominees.length - 1) {
         const seconds = phaseDuration('defense');
@@ -1255,7 +1407,7 @@ async function hostAdvancePhase() {
     const ends = seconds > 0 ? new Date(Date.now() + seconds * 1000).toISOString() : null;
     await dbUpdateRoom(state.currentRoomCode, {
         current_phase: nextPhase, current_round: nextRound, nominees: nextNominees, nominations: nextNominations,
-        defense_index: 0, phase_ends_at: ends, phase_running: seconds > 0, phase_paused_remaining: null
+        defense_index: 0, reveal_index: 0, phase_ends_at: ends, phase_running: seconds > 0, phase_paused_remaining: null
     });
 }
 
@@ -1299,7 +1451,7 @@ async function actionResetToLobby() {
     await dbUpdateRoom(state.currentRoomCode, {
         phase: 'lobby', countdown_ends_at: null, current_round: 1, current_phase: 'reveal',
         phase_ends_at: null, phase_running: false, phase_paused_remaining: null,
-        nominees: [], nominations: {}, defense_index: 0,
+        nominees: [], nominations: {}, defense_index: 0, reveal_index: 0,
         active_bonus_ids: [], revealed_bonus_ids: [], scenario_visible: false
     });
     state.lastRenderedView = null;
