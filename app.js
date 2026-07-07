@@ -858,6 +858,10 @@ async function fetchRevealedTraits() {
 function renderGameTable() {
     stopCountdownTick();
     const room = state.room;
+    if (room.current_phase === 'awaiting_verdict' || room.current_phase === 'finished') {
+        renderFinalPhaseTable();
+        return;
+    }
     const isHost = room.host_id === state.playerId;
     const meta = PHASE_META[room.current_phase] || { label: room.current_phase, icon: '❔', color: '#555', durationKey: null };
     const hasTimer = !!meta.durationKey;
@@ -901,15 +905,6 @@ function renderGameTable() {
         } else {
             phaseBody = `<p class="muted-note">Голосование завершилось без исключения — никто не набрал голосов.</p>`;
         }
-    } else if (room.current_phase === 'awaiting_verdict') {
-        const alive = state.players.filter(p => p.id !== room.host_id && p.is_alive !== false);
-        phaseBody = `<p>Раунды завершены. Претенденты на выживание: <strong>${alive.map(p => escapeHtml(p.name)).join(', ') || 'никто'}</strong></p>` +
-            (state.playerId === room.host_id
-                ? '<p class="muted-note">Нажмите «Огласить вердикт», когда будете готовы.</p>'
-                : '<p class="muted-note">Ожидайте вердикта ведущего.</p>');
-    } else if (room.current_phase === 'finished') {
-        const survivors = state.players.filter(p => p.id !== room.host_id && p.is_alive !== false);
-        phaseBody = `<p>Игра завершена. Выжившие: <strong>${survivors.map(p => escapeHtml(p.name)).join(', ') || 'никто'}</strong></p>`;
     }
 
     document.getElementById('app').innerHTML = `
@@ -961,6 +956,65 @@ function renderGameTable() {
     refreshEventsFeed();
     refreshGameChat();
     loadMyVoteStatus();
+    updateGameDynamic();
+}
+
+// [Финальная фаза] Стол — единственное функциональное поле на экране:
+// ведущий и оставшиеся (выбывшие тоже видны, но серые) до момента оглашения вердикта.
+function renderFinalPhaseTable() {
+    const room = state.room;
+    const isHost = room.host_id === state.playerId;
+    const meta = PHASE_META[room.current_phase] || { label: room.current_phase, icon: '❔', color: '#555' };
+
+    let phaseBody = '';
+    if (room.current_phase === 'awaiting_verdict') {
+        const alive = state.players.filter(p => p.id !== room.host_id && p.is_alive !== false);
+        phaseBody = `<p>Финальный раунд. Оставшиеся: <strong>${alive.map(p => escapeHtml(p.name)).join(', ') || 'никто'}</strong></p>` +
+            (isHost
+                ? '<p class="muted-note">Выслушайте вслух аргументы игроков об их шансах и вынесите вердикт.</p>'
+                : (room.final_reveal_unlocked
+                    ? '<p class="muted-note">Можно открыть последнюю характеристику — кнопка на своей карточке за столом ниже.</p>'
+                    : '<p class="muted-note">Обсудите с ведущим вслух свои шансы на выживание.</p>'));
+    } else {
+        const survivors = state.players.filter(p => p.id !== room.host_id && p.is_alive !== false);
+        const verdictLabel = room.verdict === 'victory' ? '🏆 ПОБЕДА' : (room.verdict === 'defeat' ? '💀 ПОРАЖЕНИЕ' : '');
+        phaseBody = `<p style="font-size:22px; margin-bottom:6px;">${verdictLabel}</p><p>Выжившие: <strong>${survivors.map(p => escapeHtml(p.name)).join(', ') || 'никто'}</strong></p>`;
+    }
+
+    let hostControls = '';
+    if (isHost && room.current_phase === 'awaiting_verdict') {
+        hostControls = `
+            <div class="settings-field wide" style="margin-top:10px;">
+                <label><input type="checkbox" id="finalRevealToggle" onchange="actionToggleFinalReveal()" ${room.final_reveal_unlocked ? 'checked' : ''} style="width:auto;display:inline-block;margin-right:6px;vertical-align:middle;">Разрешить игрокам открыть последнюю характеристику</label>
+            </div>
+            <div style="margin-top:10px; display:flex; gap:8px; justify-content:center; flex-wrap:wrap;">
+                <button class="btn ${room.verdict === 'victory' ? 'btn-primary' : 'btn-ghost'}" onclick="actionSetVerdictChoice('victory')">Победа</button>
+                <button class="btn ${room.verdict === 'defeat' ? 'btn-danger' : 'btn-ghost'}" onclick="actionSetVerdictChoice('defeat')">Поражение</button>
+            </div>
+            <div style="margin-top:8px;">
+                <input type="number" id="verdictPercent" placeholder="Шанс выжить" min="0" max="100" value="${room.verdict_percent ?? ''}" style="width:140px; display:inline-block; margin:0;"> %
+            </div>
+            <p class="muted-note" style="margin-top:6px;">Кнопки и процент видны только вам, игроки их не видят.</p>
+            <button class="btn btn-danger btn-sm" style="margin-top:10px;" onclick="actionAnnounceVerdict()">Огласить вердикт</button>
+        `;
+    }
+
+    document.getElementById('app').innerHTML = `
+        <h1>ОСТАТЬСЯ <span>В ЖИВЫХ</span></h1>
+        <div class="hazard-strip"></div>
+        <div class="panel" style="border-left:6px solid ${meta.color}; text-align:center;">
+            <div style="font-size:14px; letter-spacing:0.08em; text-transform:uppercase; color:${meta.color};">${meta.icon} ${escapeHtml(meta.label)}</div>
+            ${phaseBody}
+            ${hostControls}
+        </div>
+        <div class="panel">
+            <h2>Стол</h2>
+            <div id="hostStrip"></div>
+            <div class="ptable-grid" id="gamePlayersList"></div>
+        </div>
+        ${isHost ? `<button class="btn btn-ghost" style="margin-top:16px;" onclick="actionResetToLobby()">Сбросить в лобби (для теста)</button>` : ''}
+    `;
+    loadMyCard(); // держим кэш карточки свежим — нужен для кнопки открытия последней характеристики на столе
     updateGameDynamic();
 }
 
@@ -1031,12 +1085,7 @@ function renderHostPhaseControls(room, hasTimer) {
             timerButtons = `<button class="btn btn-primary btn-sm" onclick="hostStartTimer()">Старт таймера</button>`;
         }
     }
-    let advanceButton = '';
-    if (room.current_phase === 'awaiting_verdict') {
-        advanceButton = `<button class="btn btn-danger btn-sm" onclick="actionAnnounceVerdict()">Огласить вердикт</button>`;
-    } else if (room.current_phase !== 'finished') {
-        advanceButton = `<button class="btn btn-danger btn-sm" onclick="hostAdvancePhase()">Далее →</button>`;
-    }
+    const advanceButton = `<button class="btn btn-danger btn-sm" onclick="hostAdvancePhase()">Далее →</button>`;
     return `<div style="margin-top:12px; display:flex; gap:8px; justify-content:center; flex-wrap:wrap;"> ${timerButtons} ${advanceButton} </div>`;
 }
 
@@ -1082,6 +1131,17 @@ async function updateGameDynamic() {
                 `<div style="font-size:11px; color:#b7b190; margin-top:2px;"><b>${t.cat}:</b> ${escapeHtml(t.text)}</div>`
             ).join('');
 
+            // [Финальная фаза] Открытие последней скрытой характеристики — прямо в своей карточке на столе
+            let finalRevealHtml = '';
+            if (room.current_phase === 'awaiting_verdict' && isMe && !isEliminated) {
+                const hidden = (state.myCardCache || []).filter(c => !c.revealed);
+                if (hidden.length > 0) {
+                    finalRevealHtml = room.final_reveal_unlocked
+                        ? hidden.map(c => `<button class="btn btn-sm btn-primary" style="margin-top:4px;" onclick="actionRevealTrait('${c.id}')">Открыть: ${escapeHtml(CATEGORY_LABELS[c.category] || c.category)}</button>`).join('')
+                        : '<div class="muted-note" style="font-size:11px; margin-top:4px;">Ждите разрешения ведущего</div>';
+                }
+            }
+
             return `<div class="ptable-card${isSpeaking ? ' speaking' : ''}${isNominated ? ' nominated' : ''}${isEliminated ? ' eliminated' : ''}">
                 <div class="ptable-card-head">
                     <div class="ptable-avatar"></div>
@@ -1095,6 +1155,7 @@ async function updateGameDynamic() {
                     ${canNominate ? `<button class="btn btn-ghost btn-sm" onclick="actionNominate('${p.id}')">Выставить</button>` : ''}
                     ${state.myVoteThisRound === p.id ? '<span class="muted-note">Ваш голос</span>' : ''}
                     ${canVote ? `<button class="btn btn-ghost btn-sm" onclick="actionCastVote('${p.id}')">Голосовать</button>` : ''}
+                    ${finalRevealHtml}
                 </div>
             </div>`;
         }).join('');
@@ -1312,7 +1373,7 @@ function toggleTargetPicker(cardId) {
 async function actionUseSpecialCondition(cardId) {
     const picker = document.getElementById('targetPicker_' + cardId);
     const targets = picker ? Array.from(picker.querySelectorAll('input[type=checkbox]:checked')).map(cb => cb.value) : [];
-    const card = (state.myCardCache || []).find(c => c.id === cardId);
+    const card = (state.myCardCache || []).find(c => String(c.id) === String(cardId));
     await supabaseClient.from('player_cards').update({ used: true, used_targets: targets }).eq('id', cardId);
     const myName = (state.players.find(p => p.id === state.playerId) || {}).name || state.playerName;
     const targetNames = targets.map(id => (state.players.find(p => p.id === id) || {}).name).filter(Boolean);
@@ -1336,12 +1397,26 @@ async function actionSaveNote(btn) {
 
 async function actionRevealTrait(cardId) {
     const room = state.room;
+    const me = state.players.find(p => p.id === state.playerId);
+    if (me && me.is_alive === false) return alert('Вы выбыли из игры и не можете открывать характеристики.');
+
+    if (room.current_phase === 'awaiting_verdict') {
+        if (!room.final_reveal_unlocked) return alert('Ведущий ещё не разрешил открывать последнюю характеристику.');
+        const card = state.myCardCache || [];
+        const target = card.find(c => String(c.id) === String(cardId));
+        if (!target || target.revealed) return;
+        await supabaseClient.from('player_cards').update({ revealed: true, round_revealed: room.current_round }).eq('id', cardId);
+        loadMyCard();
+        updateGameDynamic();
+        return;
+    }
+
     if (room.current_phase !== 'reveal') return alert('Открытие характеристик доступно только в фазе «Открытие раунда».');
     const revealOrder = state.players.filter(p => p.id !== room.host_id);
     const active = revealOrder[room.reveal_index || 0];
     if (!active || active.id !== state.playerId) return alert('Сейчас не ваш ход.');
     const card = state.myCardCache || [];
-    const target = card.find(c => c.id === cardId);
+    const target = card.find(c => String(c.id) === String(cardId));
     if (!target) return;
     const check = canRevealCategory(card, room, target.category);
     if (!check.ok) return alert(check.reason);
@@ -1608,14 +1683,29 @@ async function loadVoteProgress() {
 }
 
 // ---------- Финальный вердикт ----------
+// ---------- Финальная фаза: разрешение на последний реveal + скрытый инструмент вердикта ----------
+async function actionToggleFinalReveal() {
+    await dbUpdateRoom(state.currentRoomCode, { final_reveal_unlocked: !state.room.final_reveal_unlocked });
+}
+
+async function actionSetVerdictChoice(choice) {
+    await dbUpdateRoom(state.currentRoomCode, { verdict: choice });
+}
+
 async function actionAnnounceVerdict() {
     const room = state.room;
+    if (!room.verdict) return alert('Сначала выберите «Победа» или «Поражение».');
+    const percentInput = document.getElementById('verdictPercent');
+    const percent = percentInput && percentInput.value !== '' ? Math.max(0, Math.min(100, parseInt(percentInput.value) || 0)) : null;
     await dbUpdateRoom(state.currentRoomCode, {
-        current_phase: 'finished', phase_ends_at: null, phase_running: false, phase_paused_remaining: null
+        current_phase: 'finished', phase_ends_at: null, phase_running: false, phase_paused_remaining: null,
+        verdict_percent: percent
     });
     const survivors = state.players.filter(p => p.id !== room.host_id && p.is_alive !== false).map(p => p.name).join(', ');
-    await dbInsertEvent(state.currentRoomCode, room.current_round, 'positive',
-        'Вердикт вынесен. Выжившие: ' + (survivors || 'никто'), null, false);
+    await dbInsertEvent(state.currentRoomCode, room.current_round,
+        room.verdict === 'victory' ? 'positive' : 'negative',
+        'Вердикт вынесен: ' + (room.verdict === 'victory' ? 'ПОБЕДА' : 'ПОРАЖЕНИЕ') + '. Выжившие: ' + (survivors || 'никто'),
+        null, false);
 }
 
 // ---------- Открытие случайного доп. свойства бункера ----------
@@ -1639,7 +1729,8 @@ async function actionResetToLobby() {
         phase: 'lobby', countdown_ends_at: null, current_round: 1, current_phase: 'reveal',
         phase_ends_at: null, phase_running: false, phase_paused_remaining: null,
         nominees: [], nominations: {}, defense_index: 0, reveal_index: 0,
-        active_bonus_ids: [], revealed_bonus_ids: [], scenario_visible: false, last_eliminated_id: null
+        active_bonus_ids: [], revealed_bonus_ids: [], scenario_visible: false, last_eliminated_id: null,
+        final_reveal_unlocked: false, verdict: null, verdict_percent: null
     });
     state.lastRenderedView = null;
     state.lastGameRenderKey = null;
