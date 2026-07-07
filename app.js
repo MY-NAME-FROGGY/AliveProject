@@ -41,7 +41,8 @@ const PHASE_META = {
     voting:        { label: 'Голосование',          icon: '🗳️', color: '#7a5c1e', durationKey: 'voting' },
     vote_result:   { label: 'Итог голосования',     icon: '📋', color: '#a63d2f', durationKey: null },
     bunker_reveal: { label: 'Открытие бункера',     icon: '🔓', color: '#4a4e28', durationKey: null },
-    awaiting_verdict: { label: 'Раунды завершены',  icon: '⏳', color: '#8a6b1d', durationKey: null }
+    awaiting_verdict: { label: 'Раунды завершены',  icon: '⏳', color: '#8a6b1d', durationKey: null },
+    finished:      { label: 'Вердикт вынесен',      icon: '🏁', color: '#5b8a4a', durationKey: null }
 };
 
 function phaseDuration(phaseKey) {
@@ -337,6 +338,26 @@ async function dbInsertEvent(roomCode, round, type, text, targetId, isPrivate) {
 async function dbClearEvents(roomCode) {
     const { error } = await supabaseClient.from('game_events').delete().eq('room_code', roomCode);
     if (error) console.error('Ошибка очистки game_events:', error);
+}
+
+// ---------- Голосование ----------
+async function dbClearVotes(roomCode) {
+    const { error } = await supabaseClient.from('votes').delete().eq('room_code', roomCode);
+    if (error) console.error('Ошибка очистки votes:', error);
+}
+
+async function dbFetchMyVote(roomCode, round, voterId) {
+    const { data, error } = await supabaseClient.from('votes')
+        .select('target_id').eq('room_code', roomCode).eq('round', round).eq('voter_id', voterId).maybeSingle();
+    if (error) { console.error(error); return null; }
+    return data ? data.target_id : null;
+}
+
+async function dbFetchVoteCount(roomCode, round) {
+    const { count, error } = await supabaseClient.from('votes')
+        .select('voter_id', { count: 'exact', head: true }).eq('room_code', roomCode).eq('round', round);
+    if (error) { console.error(error); return 0; }
+    return count || 0;
 }
 
 // [ИСПРАВЛЕНО 1] Добавлен параметр hostId, чтобы пропускать ведущего
@@ -867,11 +888,28 @@ function renderGameTable() {
         phaseBody = `<p>Сейчас выступает: <strong>${escapeHtml(speaker ? speaker.name : '—')}</strong> (${nominees.length ? defenseIdx + 1 : 0} из ${nominees.length})</p>`;
     } else if (room.current_phase === 'voting') {
         const names = nominees.map(id => escapeHtml((state.players.find(p => p.id === id) || {}).name || '?')).join(', ');
-        phaseBody = `<p>Кандидаты: <strong>${names || 'нет выставленных'}</strong></p><p class="muted-note">Само голосование и подсчёт появятся на Шаге 7.</p>`;
+        const iAmHost = state.playerId === room.host_id;
+        phaseBody = `<p>Кандидаты: <strong>${names || 'нет выставленных'}</strong></p>
+            <p class="muted-note">Голосование слепое — выбор нельзя изменить. <span id="voteProgress"></span></p>` +
+            (iAmHost ? '' : (state.myVoteThisRound
+                ? '<p class="muted-note">Вы проголосовали.</p>'
+                : '<p class="muted-note">Выберите, за кого голосовать, кнопкой на карточке кандидата в столе ниже.</p>'));
     } else if (room.current_phase === 'vote_result') {
-        phaseBody = `<p class="muted-note">Итоги голосования появятся на Шаге 7.</p>`;
+        if (room.last_eliminated_id) {
+            const elim = state.players.find(p => p.id === room.last_eliminated_id);
+            phaseBody = `<p><strong>${escapeHtml(elim ? elim.name : 'Игрок')}</strong> исключён(а) по итогам голосования.</p>`;
+        } else {
+            phaseBody = `<p class="muted-note">Голосование завершилось без исключения — никто не набрал голосов.</p>`;
+        }
     } else if (room.current_phase === 'awaiting_verdict') {
-        phaseBody = `<p>Раунды закончены. Финальный вердикт ведущего появится на Шаге 7.</p>`;
+        const alive = state.players.filter(p => p.id !== room.host_id && p.is_alive !== false);
+        phaseBody = `<p>Раунды завершены. Претенденты на выживание: <strong>${alive.map(p => escapeHtml(p.name)).join(', ') || 'никто'}</strong></p>` +
+            (state.playerId === room.host_id
+                ? '<p class="muted-note">Нажмите «Огласить вердикт», когда будете готовы.</p>'
+                : '<p class="muted-note">Ожидайте вердикта ведущего.</p>');
+    } else if (room.current_phase === 'finished') {
+        const survivors = state.players.filter(p => p.id !== room.host_id && p.is_alive !== false);
+        phaseBody = `<p>Игра завершена. Выжившие: <strong>${survivors.map(p => escapeHtml(p.name)).join(', ') || 'никто'}</strong></p>`;
     }
 
     document.getElementById('app').innerHTML = `
@@ -922,6 +960,7 @@ function renderGameTable() {
     loadScenarioPanelGame();
     refreshEventsFeed();
     refreshGameChat();
+    loadMyVoteStatus();
     updateGameDynamic();
 }
 
@@ -992,7 +1031,13 @@ function renderHostPhaseControls(room, hasTimer) {
             timerButtons = `<button class="btn btn-primary btn-sm" onclick="hostStartTimer()">Старт таймера</button>`;
         }
     }
-    return `<div style="margin-top:12px; display:flex; gap:8px; justify-content:center; flex-wrap:wrap;"> ${timerButtons} <button class="btn btn-danger btn-sm" onclick="hostAdvancePhase()">Далее →</button> </div>`;
+    let advanceButton = '';
+    if (room.current_phase === 'awaiting_verdict') {
+        advanceButton = `<button class="btn btn-danger btn-sm" onclick="actionAnnounceVerdict()">Огласить вердикт</button>`;
+    } else if (room.current_phase !== 'finished') {
+        advanceButton = `<button class="btn btn-danger btn-sm" onclick="hostAdvancePhase()">Далее →</button>`;
+    }
+    return `<div style="margin-top:12px; display:flex; gap:8px; justify-content:center; flex-wrap:wrap;"> ${timerButtons} ${advanceButton} </div>`;
 }
 
 // [ИСПРАВЛЕНО 4] Функция стала async, чтобы подтягивать открытые характеристики
@@ -1024,32 +1069,38 @@ async function updateGameDynamic() {
     if (listEl) {
         listEl.innerHTML = state.players.filter(p => p.id !== room.host_id).map(p => {
             const isMe = p.id === state.playerId;
+            const isEliminated = p.is_alive === false;
             const isNominated = nominees.includes(p.id);
             const isSpeaking = (room.current_phase === 'defense' && nominees[defenseIdx] === p.id) ||
                                 (room.current_phase === 'reveal' && revealActiveId === p.id);
-            
-            // [ИСПРАВЛЕНО 5] Ведущий не может выставлять, но на всякий случай проверяем и здесь
-            const canNominate = room.current_phase === 'nomination' && !isMe && !myNomination && state.playerId !== room.host_id;
+
+            const canNominate = room.current_phase === 'nomination' && !isMe && !myNomination && state.playerId !== room.host_id && !isEliminated;
+            const canVote = room.current_phase === 'voting' && !isMe && isNominated && state.playerId !== room.host_id && !state.myVoteThisRound;
 
             // Рендерим открытые характеристики
             const traitsHtml = (revealedTraits[p.id] || []).map(t => 
                 `<div style="font-size:11px; color:#b7b190; margin-top:2px;"><b>${t.cat}:</b> ${escapeHtml(t.text)}</div>`
             ).join('');
 
-            return `<div class="ptable-card${isSpeaking ? ' speaking' : ''}${isNominated ? ' nominated' : ''}">
+            return `<div class="ptable-card${isSpeaking ? ' speaking' : ''}${isNominated ? ' nominated' : ''}${isEliminated ? ' eliminated' : ''}">
                 <div class="ptable-card-head">
                     <div class="ptable-avatar"></div>
                     <div class="ptable-name">${p.seat_number ? '№' + p.seat_number + ' ' : ''}${escapeHtml(p.name)}${isMe ? ' (Вы)' : ''}</div>
                 </div>
                 <div class="ptable-card-body">
                     ${traitsHtml}
-                    ${isNominated ? '<span class="badge badge-timeout">Выставлен(а)</span>' : ''}
+                    ${isEliminated ? '<span class="badge badge-muted">Выбыл(а)</span>' : ''}
+                    ${isNominated && !isEliminated ? '<span class="badge badge-timeout">Выставлен(а)</span>' : ''}
                     ${myNomination === p.id ? '<span class="muted-note">Ваш выбор</span>' : ''}
                     ${canNominate ? `<button class="btn btn-ghost btn-sm" onclick="actionNominate('${p.id}')">Выставить</button>` : ''}
+                    ${state.myVoteThisRound === p.id ? '<span class="muted-note">Ваш голос</span>' : ''}
+                    ${canVote ? `<button class="btn btn-ghost btn-sm" onclick="actionCastVote('${p.id}')">Голосовать</button>` : ''}
                 </div>
             </div>`;
         }).join('');
     }
+
+    loadVoteProgress();
 
     const scenPanel = document.getElementById('scenarioPanelGame');
     if (scenPanel) scenPanel.style.display = room.scenario_visible ? 'block' : 'none';
@@ -1192,13 +1243,16 @@ async function loadMyCard() {
     const note = await dbFetchNote(state.currentRoomCode, state.playerId);
     const revealOrder = state.players.filter(p => p.id !== room.host_id);
     const isMyRevealTurn = room.current_phase === 'reveal' && (revealOrder[room.reveal_index || 0] || {}).id === state.playerId;
+    const amEliminated = (state.players.find(p => p.id === state.playerId) || {}).is_alive === false;
 
     // [Шаг 6, п.1.2] Свой текст видно всегда; числовую "ценность" характеристики игрок не видит никогда.
     const itemsHtml = card.map(c => {
         const isSpecial = c.category === 'special_condition';
         let liClass = '', extra = '';
         if (!c.revealed) {
-            if (room.current_phase !== 'reveal') {
+            if (amEliminated) {
+                extra = '<div class="muted-note" style="font-size:11px; margin-top:3px;">(вы выбыли — открытие недоступно)</div>';
+            } else if (room.current_phase !== 'reveal') {
                 extra = '<div class="muted-note" style="font-size:11px; margin-top:3px;">(не открыто остальным — доступно только в фазе «Открытие раунда»)</div>';
             } else if (!isMyRevealTurn) {
                 extra = '<div class="muted-note" style="font-size:11px; margin-top:3px;">(не открыто остальным — сейчас не ваш ход)</div>';
@@ -1210,6 +1264,9 @@ async function loadMyCard() {
             }
         } else if (isSpecial && !c.used) {
             liClass = ' special-unused';
+            if (amEliminated) {
+                extra = '<div class="muted-note" style="font-size:11px; margin-top:3px;">(вы выбыли — использование недоступно)</div>';
+            } else {
             const others = state.players.filter(p => p.id !== state.playerId && p.id !== room.host_id);
             extra = `<div style="margin-top:6px;">
                     <button class="btn btn-sm btn-primary" onclick="toggleTargetPicker('${c.id}')">Использовать</button>
@@ -1220,6 +1277,7 @@ async function loadMyCard() {
                         <button class="btn btn-sm btn-danger" style="margin-top:4px;" onclick="actionUseSpecialCondition('${c.id}')">Подтвердить использование</button>
                     </div>
                 </div>`;
+            }
         } else if (isSpecial && c.used) {
             liClass = ' special-used';
             const targetNames = (c.used_targets || []).map(id => (state.players.find(p => p.id === id) || {}).name).filter(Boolean);
@@ -1358,6 +1416,56 @@ async function hostStopTimer() {
 }
 
 // ---------- Переход между фазами ----------
+async function resolveVoting() {
+    const room = state.room;
+    const nominees = room.nominees || [];
+    const { data: votes, error } = await supabaseClient.from('votes')
+        .select('*').eq('room_code', state.currentRoomCode).eq('round', room.current_round);
+    if (error) { console.error(error); return; }
+
+    const tally = {};
+    nominees.forEach(id => { tally[id] = 0; });
+    (votes || []).forEach(v => { if (tally[v.target_id] !== undefined) tally[v.target_id]++; });
+
+    const counts = Object.values(tally);
+    const maxVotes = counts.length ? Math.max(...counts) : 0;
+    const topCandidates = Object.keys(tally).filter(id => tally[id] === maxVotes);
+
+    if (maxVotes === 0 || topCandidates.length === 0) {
+        await dbInsertEvent(state.currentRoomCode, room.current_round, 'neutral',
+            'Голосование не выявило кандидата на исключение — никто не набрал голосов.', null, false);
+        await dbUpdateRoom(state.currentRoomCode, {
+            current_phase: 'vote_result', phase_ends_at: null, phase_running: false, phase_paused_remaining: null, last_eliminated_id: null
+        });
+        return;
+    }
+
+    if (topCandidates.length > 1) {
+        // Ничья: повторяем оправдательную речь и голосование среди тех, кто набрал максимум (правило из Возможностей, п.3.5)
+        const names = topCandidates.map(id => (state.players.find(p => p.id === id) || {}).name || '?').join(', ');
+        await supabaseClient.from('votes').delete().eq('room_code', state.currentRoomCode).eq('round', room.current_round);
+        await dbInsertEvent(state.currentRoomCode, room.current_round, 'neutral',
+            'Ничья при голосовании (' + names + ') — повторная оправдательная речь и голосование среди них.', null, false);
+        const seconds = phaseDuration('defense');
+        const ends = seconds > 0 ? new Date(Date.now() + seconds * 1000).toISOString() : null;
+        await dbUpdateRoom(state.currentRoomCode, {
+            nominees: topCandidates, defense_index: 0, current_phase: 'defense',
+            phase_ends_at: ends, phase_running: seconds > 0, phase_paused_remaining: null
+        });
+        return;
+    }
+
+    const eliminatedId = topCandidates[0];
+    const eliminatedP = state.players.find(p => p.id === eliminatedId);
+    await supabaseClient.from('players').update({ is_alive: false }).eq('id', eliminatedId);
+    await dbInsertEvent(state.currentRoomCode, room.current_round, 'negative',
+        (eliminatedP ? eliminatedP.name : 'Игрок') + ' исключён(а) по итогам голосования (' + maxVotes + ' голос(ов) из ' + (votes || []).length + ').',
+        eliminatedId, false);
+    await dbUpdateRoom(state.currentRoomCode, {
+        current_phase: 'vote_result', phase_ends_at: null, phase_running: false, phase_paused_remaining: null, last_eliminated_id: eliminatedId
+    });
+}
+
 async function hostAdvancePhase() {
     const room = state.room;
     const phase = room.current_phase;
@@ -1385,13 +1493,29 @@ async function hostAdvancePhase() {
         return;
     }
 
+    if (phase === 'voting') {
+        await resolveVoting();
+        return;
+    }
+
+    if (phase === 'vote_result') {
+        const aliveCount = state.players.filter(p => p.id !== room.host_id && p.is_alive !== false).length;
+        const targetSurvivors = room.settings?.target_survivors || 1;
+        if (aliveCount <= targetSurvivors) {
+            await dbUpdateRoom(state.currentRoomCode, {
+                current_phase: 'awaiting_verdict', phase_ends_at: null, phase_running: false, phase_paused_remaining: null, last_eliminated_id: null
+            });
+            return;
+        }
+    }
+
     const idx = PHASE_SEQUENCE.indexOf(phase);
     let nextPhase, nextRound = round, nextNominees = nominees, nextNominations = room.nominations || {};
     if (idx === -1 || idx === PHASE_SEQUENCE.length - 1) {
         const totalRounds = room.settings?.rounds || 1;
         if (round >= totalRounds) {
             await dbUpdateRoom(state.currentRoomCode, {
-                current_phase: 'awaiting_verdict', phase_ends_at: null, phase_running: false, phase_paused_remaining: null
+                current_phase: 'awaiting_verdict', phase_ends_at: null, phase_running: false, phase_paused_remaining: null, last_eliminated_id: null
             });
             return;
         }
@@ -1407,6 +1531,7 @@ async function hostAdvancePhase() {
     const ends = seconds > 0 ? new Date(Date.now() + seconds * 1000).toISOString() : null;
     await dbUpdateRoom(state.currentRoomCode, {
         current_phase: nextPhase, current_round: nextRound, nominees: nextNominees, nominations: nextNominations,
+        last_eliminated_id: null,
         defense_index: 0, reveal_index: 0, phase_ends_at: ends, phase_running: seconds > 0, phase_paused_remaining: null
     });
 }
@@ -1420,6 +1545,8 @@ async function actionNominate(targetId) {
     if (state.playerId === room.host_id) {
         return alert('Ведущий не может участвовать в голосованиях и выставлениях.');
     }
+    const me = state.players.find(p => p.id === state.playerId);
+    if (me && me.is_alive === false) return alert('Вы выбыли из игры и не можете выставлять.');
 
     if (room.current_phase !== 'nomination') return;
     if (targetId === state.playerId) return alert('Нельзя выставить самого себя.');
@@ -1431,6 +1558,64 @@ async function actionNominate(targetId) {
     nominations[state.playerId] = targetId;
     const nominees = [...new Set(Object.values(nominations))];
     await dbUpdateRoom(state.currentRoomCode, { nominations, nominees });
+}
+
+// ---------- Голосование (слепое, один голос на игрока за раунд, изменить нельзя) ----------
+async function actionCastVote(targetId) {
+    const room = state.room;
+    if (state.playerId === room.host_id) return alert('Ведущий не голосует.');
+    const me = state.players.find(p => p.id === state.playerId);
+    if (me && me.is_alive === false) return alert('Вы выбыли из игры и не можете голосовать.');
+    if (room.current_phase !== 'voting') return;
+    if (targetId === state.playerId) return alert('Нельзя голосовать за себя.');
+    if (!(room.nominees || []).includes(targetId)) return;
+    if (state.myVoteThisRound) return alert('Вы уже проголосовали в этом раунде — изменить нельзя.');
+
+    const { error } = await supabaseClient.from('votes').insert({
+        room_code: state.currentRoomCode, round: room.current_round, voter_id: state.playerId, target_id: targetId
+    });
+    if (error) {
+        if (error.code === '23505') {
+            state.myVoteThisRound = targetId;
+            updateGameDynamic();
+            return alert('Вы уже проголосовали в этом раунде.');
+        }
+        console.error(error);
+        return;
+    }
+    state.myVoteThisRound = targetId;
+    updateGameDynamic();
+}
+
+async function loadMyVoteStatus() {
+    const room = state.room;
+    if (!room || room.current_phase !== 'voting' || state.playerId === room.host_id) {
+        state.myVoteThisRound = null;
+        return;
+    }
+    state.myVoteThisRound = await dbFetchMyVote(state.currentRoomCode, room.current_round, state.playerId);
+    updateGameDynamic();
+}
+
+async function loadVoteProgress() {
+    const room = state.room;
+    const el = document.getElementById('voteProgress');
+    if (!el) return;
+    if (!room || room.current_phase !== 'voting') { el.textContent = ''; return; }
+    const count = await dbFetchVoteCount(state.currentRoomCode, room.current_round);
+    const total = state.players.filter(p => p.id !== room.host_id && p.is_alive !== false).length;
+    el.textContent = `Проголосовало: ${count} из ${total}`;
+}
+
+// ---------- Финальный вердикт ----------
+async function actionAnnounceVerdict() {
+    const room = state.room;
+    await dbUpdateRoom(state.currentRoomCode, {
+        current_phase: 'finished', phase_ends_at: null, phase_running: false, phase_paused_remaining: null
+    });
+    const survivors = state.players.filter(p => p.id !== room.host_id && p.is_alive !== false).map(p => p.name).join(', ');
+    await dbInsertEvent(state.currentRoomCode, room.current_round, 'positive',
+        'Вердикт вынесен. Выжившие: ' + (survivors || 'никто'), null, false);
 }
 
 // ---------- Открытие случайного доп. свойства бункера ----------
@@ -1448,11 +1633,13 @@ async function actionResetToLobby() {
     stopGamePhaseTick();
     await dbClearCards(state.currentRoomCode);
     await dbClearEvents(state.currentRoomCode);
+    await dbClearVotes(state.currentRoomCode);
+    await supabaseClient.from('players').update({ is_alive: true }).eq('room_code', state.currentRoomCode);
     await dbUpdateRoom(state.currentRoomCode, {
         phase: 'lobby', countdown_ends_at: null, current_round: 1, current_phase: 'reveal',
         phase_ends_at: null, phase_running: false, phase_paused_remaining: null,
         nominees: [], nominations: {}, defense_index: 0, reveal_index: 0,
-        active_bonus_ids: [], revealed_bonus_ids: [], scenario_visible: false
+        active_bonus_ids: [], revealed_bonus_ids: [], scenario_visible: false, last_eliminated_id: null
     });
     state.lastRenderedView = null;
     state.lastGameRenderKey = null;
