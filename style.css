@@ -90,6 +90,7 @@ input::placeholder { color: #888; }
 .ptable-card{background:var(--void); border:1px solid #4a4e28; border-radius:10px; padding:10px; display:flex; flex-direction:column; gap:8px; min-height:120px;}
 .ptable-card.speaking{border-color:var(--hazard); box-shadow:0 0 0 2px var(--hazard) inset;}
 .ptable-card.nominated{border-color:var(--danger);}
+.ptable-card.eliminated{opacity:0.45; filter:grayscale(1);}
 .ptable-card-head{display:flex; justify-content:space-between; align-items:center; gap:8px;}
 .ptable-avatar{width:32px; height:32px; border-radius:50%; background:#2a2d1c; border:1px solid #4a4e28; flex-shrink:0;}
 .ptable-name{font-weight:600; font-size:13px; text-align:right; overflow-wrap:anywhere;}
