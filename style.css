@@ -16,7 +16,7 @@ h1 span { color: var(--paper); }
 /* [ИСПРАВЛЕНО 2] Уменьшены внутренние отступы панелей */
 .panel{background:var(--void-2);border:1px solid #33361f;border-radius:6px;padding:14px;margin-bottom:16px;}
 
-.btn{display:inline-block;font-family:'Arial Black',sans-serif;text-transform:uppercase;letter-spacing:0.05em;font-size:14px;font-weight:600;padding:12px 20px;border-radius:4px;border:none;cursor:pointer; transition: 0.2s;}
+.btn{display:inline-block;font-family:'Arial Black',sans-serif;text-transform:uppercase;letter-spacing:0.05em;font-size:14px;font-weight:600;padding:12px 20px;border-radius:4px;border:none;cursor:pointer; transition: 0.2s; touch-action:manipulation;}
 .btn:hover { opacity: 0.85; }
 .btn-primary{background:var(--hazard);color:#211d13;}
 .btn-danger{background:var(--danger);color:white;}
