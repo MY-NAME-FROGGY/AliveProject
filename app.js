@@ -32,6 +32,9 @@ const CATEGORY_LABELS = {
 };
 const CATEGORY_LIST = Object.keys(CATEGORY_LABELS);
 
+const AVATAR_OPTIONS = ['🧑‍🚀','🧑‍⚕️','🧑‍🌾','🧑‍🍳','🧑‍🔬','🧑‍🎨','🧑‍🏫','🧑‍💻','🧑‍🚒','🧑‍✈️','🥷','🧟','🧛','🧙','🦸','🐺','🦊','🐻','🐱','🐧'];
+const COLOR_OPTIONS = ['#e9e3d0','#d3a026','#a63d2f','#5b6b48','#5b8a4a','#9b7fd4','#4a90a4','#c97b3d','#7a5c1e','#b04a6a'];
+
 const PHASE_SEQUENCE = ['reveal', 'discussion', 'nomination', 'defense', 'voting', 'vote_result', 'bunker_reveal'];
 const PHASE_META = {
     reveal:        { label: 'Открытие раунда',     icon: '🃏', color: '#5b6b48', durationKey: 'reveal' },
@@ -69,7 +72,8 @@ const state = {
     lastGameRenderKey: null,
     gamePhaseTick: null,
     gameScenario: null,
-    gameChatRecipient: null
+    gameChatRecipient: null,
+    cardsGenerationInFlight: false
 };
 
 localStorage.setItem('playerId', state.playerId);
@@ -210,6 +214,40 @@ function renderSeatPicker(room) {
     }
     html += '</div>';
     return html;
+}
+
+// ---------- Кастомизация (аватар + цвета) — задаётся в лобби, действует и в игре ----------
+async function dbSetCustomization(roomCode, playerId, patch) {
+    const { error } = await supabaseClient.from('players').update(patch).eq('id', playerId).eq('room_code', roomCode);
+    if (error) console.error('Ошибка сохранения кастомизации:', error);
+}
+async function actionSetAvatar(a) { await dbSetCustomization(state.currentRoomCode, state.playerId, { avatar: a }); }
+async function actionSetColor(c) { await dbSetCustomization(state.currentRoomCode, state.playerId, { color: c }); }
+async function actionSetOutlineColor(c) { await dbSetCustomization(state.currentRoomCode, state.playerId, { outline_color: c }); }
+
+function renderCustomizationPicker() {
+    const me = state.players.find(p => p.id === state.playerId) || {};
+    const avatarsHtml = AVATAR_OPTIONS.map(a =>
+        `<button class="btn btn-sm ${me.avatar === a ? 'btn-primary' : 'btn-ghost'}" onclick="actionSetAvatar('${a}')" style="font-size:18px; padding:6px 10px;">${a}</button>`
+    ).join('');
+    const swatches = (current, setter) => COLOR_OPTIONS.map(c =>
+        `<button onclick="${setter}('${c}')" title="${c}" style="width:28px; height:28px; border-radius:50%; background:${c}; border:2px solid ${current === c ? 'var(--paper)' : 'transparent'}; cursor:pointer; margin:3px; padding:0;"></button>`
+    ).join('');
+    return `
+        <h3 style="margin-top:4px;">Аватар</h3>
+        <div style="display:flex; flex-wrap:wrap; gap:6px;">${avatarsHtml}</div>
+        <h3 style="margin-top:12px;">Цвет ника</h3>
+        <div style="display:flex; flex-wrap:wrap;">${swatches(me.color, 'actionSetColor')}</div>
+        <h3 style="margin-top:12px;">Цвет обводки карточки</h3>
+        <div style="display:flex; flex-wrap:wrap;">${swatches(me.outline_color, 'actionSetOutlineColor')}</div>
+    `;
+}
+
+function avatarChip(p) {
+    return `<div class="ptable-avatar" style="border-color:${p.outline_color || '#4a4e28'};">${p.avatar || ''}</div>`;
+}
+function nameColorStyle(p) {
+    return p.color ? `color:${p.color};` : '';
 }
 
 async function dbKickPlayer(code, targetId, actorId) {
@@ -428,21 +466,31 @@ async function pollTick() {
             await dbUpdateRoom(state.currentRoomCode, { phase: 'lobby', countdown_ends_at: null });
             alert('Старт отменён: ' + notReady.name + ' не готов(а).');
             room.phase = 'lobby';
-        } else if (room.countdown_ends_at && new Date(room.countdown_ends_at) <= new Date()) {
-            // [ИСПРАВЛЕНО 1] Передаем host_id в генератор карт
-            await generateCardsForRoom(state.currentRoomCode, players, room.host_id);
-            const activeBonusIds = await selectActiveBonusIds(room.scenario_id, players.length);
-            // [ФИКС] room 1-й фазы "reveal" никогда не получал таймер, даже если он задан в настройках —
-            // отсюда впечатление, что настройки таймеров вообще не влияют на игру.
-            const revealSeconds = phaseDuration('reveal');
-            const revealEnds = revealSeconds > 0 ? new Date(Date.now() + revealSeconds * 1000).toISOString() : null;
-            await dbUpdateRoom(state.currentRoomCode, {
-                phase: 'game', current_round: 1, current_phase: 'reveal',
-                phase_ends_at: revealEnds, phase_running: revealSeconds > 0, phase_paused_remaining: null,
-                nominees: [], nominations: {}, defense_index: 0, reveal_index: 0,
-                active_bonus_ids: activeBonusIds, revealed_bonus_ids: []
-            });
-            room.phase = 'game';
+        } else if (room.countdown_ends_at && new Date(room.countdown_ends_at) <= new Date() && !state.cardsGenerationInFlight) {
+            // [ФИКС] pollTick идёт раз в 2 сек; если генерация карточек (несколько последовательных
+            // insert-запросов) не успевает уложиться в 2 сек — что гораздо вероятнее на медленном/мобильном
+            // соединении, чем на десктопном wifi — следующий тик мог повторно войти сюда, пока room.phase
+            // в БД ещё не сменился на 'game'. Это давало параллельную генерацию и конфликт unique-constraint
+            // на part игроков, у которых insert проигрывал гонку — карточка у них просто не появлялась.
+            state.cardsGenerationInFlight = true;
+            try {
+                // [ИСПРАВЛЕНО 1] Передаем host_id в генератор карт
+                await generateCardsForRoom(state.currentRoomCode, players, room.host_id);
+                const activeBonusIds = await selectActiveBonusIds(room.scenario_id, players.length);
+                // [ФИКС] room 1-й фазы "reveal" никогда не получал таймер, даже если он задан в настройках —
+                // отсюда впечатление, что настройки таймеров вообще не влияют на игру.
+                const revealSeconds = phaseDuration('reveal');
+                const revealEnds = revealSeconds > 0 ? new Date(Date.now() + revealSeconds * 1000).toISOString() : null;
+                await dbUpdateRoom(state.currentRoomCode, {
+                    phase: 'game', current_round: 1, current_phase: 'reveal',
+                    phase_ends_at: revealEnds, phase_running: revealSeconds > 0, phase_paused_remaining: null,
+                    nominees: [], nominations: {}, defense_index: 0, reveal_index: 0,
+                    active_bonus_ids: activeBonusIds, revealed_bonus_ids: []
+                });
+                room.phase = 'game';
+            } finally {
+                state.cardsGenerationInFlight = false;
+            }
         }
     }
 
@@ -527,6 +575,11 @@ function renderLobby() {
         <div class="panel" id="settingsPanel">
             <h2>Настройки игры</h2>
             <div id="settingsContent">${isHost ? renderSettingsEditable(settings) : renderSettingsReadonly(settings)}</div>
+        </div>
+        <div class="panel">
+            <h2>Кастомизация</h2>
+            <p class="muted-note">Аватар и цвета будут видны и в лобби, и за столом в игре.</p>
+            <div id="customizationPicker">${renderCustomizationPicker()}</div>
         </div>
         <div class="panel">
             <h2>Выбор места</h2>
@@ -648,6 +701,9 @@ function updateLobbyDynamic() {
     const seatEl = document.getElementById('seatPicker');
     if (seatEl) seatEl.innerHTML = renderSeatPicker(room);
 
+    const customEl = document.getElementById('customizationPicker');
+    if (customEl) customEl.innerHTML = renderCustomizationPicker();
+
     const countEl = document.getElementById('playerCount');
     if (countEl) countEl.innerText = state.players.length + (room.settings?.max_players ? ' / ' + room.settings.max_players : '');
     
@@ -685,8 +741,9 @@ function renderPlayerRow(p, room, isHost) {
     const timedOut = p.timeout_until && new Date(p.timeout_until) > new Date();
     return `
         <li>
-            <span>
-                <span class="player-name">${p.seat_number ? '№' + p.seat_number + ' ' : ''}${escapeHtml(p.name)}${isMe ? ' (Вы)' : ''}</span>
+            <span style="display:flex; align-items:center; gap:8px;">
+                ${p.avatar ? `<span style="font-size:18px;">${p.avatar}</span>` : ''}
+                <span class="player-name" style="${nameColorStyle(p)}">${p.seat_number ? '№' + p.seat_number + ' ' : ''}${escapeHtml(p.name)}${isMe ? ' (Вы)' : ''}</span>
                 ${isHostRow ? '<span class="host-badge">Ведущий</span>' : ''}
                 <span class="badge ${p.is_ready ? 'badge-ready' : 'badge-notready'}">${p.is_ready ? 'Готов' : 'Не готов'}</span>
                 ${p.is_muted ? '<span class="badge badge-muted">Мут</span>' : ''}
@@ -1108,8 +1165,8 @@ async function updateGameDynamic() {
     const hostEl = document.getElementById('hostStrip');
     if (hostEl) {
         hostEl.innerHTML = hostP ? `<div class="host-strip">
-            <div class="ptable-avatar"></div>
-            <div style="flex:1;"><span class="player-name">${hostP.seat_number ? '№' + hostP.seat_number + ' ' : ''}${escapeHtml(hostP.name)}${hostP.id === state.playerId ? ' (Вы)' : ''}</span></div>
+            ${avatarChip(hostP)}
+            <div style="flex:1;"><span class="player-name" style="${nameColorStyle(hostP)}">${hostP.seat_number ? '№' + hostP.seat_number + ' ' : ''}${escapeHtml(hostP.name)}${hostP.id === state.playerId ? ' (Вы)' : ''}</span></div>
             <span class="host-badge">Ведущий</span>
         </div>` : '';
     }
@@ -1144,8 +1201,8 @@ async function updateGameDynamic() {
 
             return `<div class="ptable-card${isSpeaking ? ' speaking' : ''}${isNominated ? ' nominated' : ''}${isEliminated ? ' eliminated' : ''}">
                 <div class="ptable-card-head">
-                    <div class="ptable-avatar"></div>
-                    <div class="ptable-name">${p.seat_number ? '№' + p.seat_number + ' ' : ''}${escapeHtml(p.name)}${isMe ? ' (Вы)' : ''}</div>
+                    ${avatarChip(p)}
+                    <div class="ptable-name" style="${nameColorStyle(p)}">${p.seat_number ? '№' + p.seat_number + ' ' : ''}${escapeHtml(p.name)}${isMe ? ' (Вы)' : ''}</div>
                 </div>
                 <div class="ptable-card-body">
                     ${traitsHtml}
