@@ -256,44 +256,6 @@ function shuffleArray(arr) {
     return a;
 }
 
-function generateBalancedCard(pool) {
-    const categories = shuffleArray(CATEGORY_LIST);
-    const half = Math.ceil(categories.length / 2);
-    const positiveCats = new Set(categories.slice(0, half));
-    const card = [];
-    for (const cat of CATEGORY_LIST) {
-        const items = pool.filter(p => p.category === cat);
-        if (items.length === 0) continue;
-        const wantPositive = positiveCats.has(cat);
-        let candidates = items.filter(p => wantPositive ? p.value >= 0 : p.value <= 0);
-        if (candidates.length === 0) candidates = items;
-        const pick = candidates[Math.floor(Math.random() * candidates.length)];
-        card.push({ category: cat, pool_id: pick.id, text: pick.text, value: pick.value });
-    }
-    return card;
-}
-
-async function dbFetchCharacterPool() {
-    const { data, error } = await supabaseClient.from('character_pool').select('id,category,text,value');
-    if (error) { console.error('Ошибка загрузки character_pool:', error); return []; }
-    return data || [];
-}
-
-async function dbCardsExist(roomCode) {
-    const { data, error } = await supabaseClient.from('player_cards').select('id').eq('room_code', roomCode).limit(1);
-    if (error) { console.error(error); return false; }
-    return !!(data && data.length > 0);
-}
-
-async function dbInsertPlayerCard(roomCode, playerId, card) {
-    const rows = card.map(c => ({
-        room_code: roomCode, player_id: playerId, category: c.category,
-        pool_id: c.pool_id, text: c.text, value: c.value, revealed: false
-    }));
-    const { error } = await supabaseClient.from('player_cards').insert(rows);
-    if (error) console.error('Ошибка записи карточки для игрока ' + playerId + ':', error);
-}
-
 async function dbFetchMyCard(roomCode, playerId) {
     const { data, error } = await supabaseClient.from('player_cards')
         .select('*').eq('room_code', roomCode).eq('player_id', playerId);
@@ -360,20 +322,11 @@ async function dbFetchVoteCount(roomCode, round) {
     return count || 0;
 }
 
-// [ИСПРАВЛЕНО 1] Добавлен параметр hostId, чтобы пропускать ведущего
-async function generateCardsForRoom(roomCode, players, hostId) {
-    const already = await dbCardsExist(roomCode);
-    if (already) return;
-    const pool = await dbFetchCharacterPool();
-    if (pool.length === 0) {
-        console.error('character_pool пуст — карточки не сгенерированы.');
-        return;
-    }
-    for (const p of players) {
-        if (p.id === hostId) continue; // Пропускаем ведущего
-        const card = generateBalancedCard(pool);
-        await dbInsertPlayerCard(roomCode, p.id, card);
-    }
+// [Шаг 10] Генерация карточек теперь выполняется на сервере (Edge Function generate-cards) —
+// клиент (анон-ключ) больше не видит character_pool.value вообще, только сервер под service_role.
+async function generateCardsForRoom(roomCode) {
+    const { error } = await supabaseClient.functions.invoke('generate-cards', { body: { room_code: roomCode } });
+    if (error) console.error('Ошибка генерации карточек (Edge Function):', error);
 }
 
 async function selectActiveBonusIds(scenarioId, playerCount) {
@@ -430,7 +383,7 @@ async function pollTick() {
             room.phase = 'lobby';
         } else if (room.countdown_ends_at && new Date(room.countdown_ends_at) <= new Date()) {
             // [ИСПРАВЛЕНО 1] Передаем host_id в генератор карт
-            await generateCardsForRoom(state.currentRoomCode, players, room.host_id);
+            await generateCardsForRoom(state.currentRoomCode);
             const activeBonusIds = await selectActiveBonusIds(room.scenario_id, players.length);
             // [ФИКС] room 1-й фазы "reveal" никогда не получал таймер, даже если он задан в настройках —
             // отсюда впечатление, что настройки таймеров вообще не влияют на игру.
@@ -1374,7 +1327,8 @@ async function actionUseSpecialCondition(cardId) {
     const picker = document.getElementById('targetPicker_' + cardId);
     const targets = picker ? Array.from(picker.querySelectorAll('input[type=checkbox]:checked')).map(cb => cb.value) : [];
     const card = (state.myCardCache || []).find(c => String(c.id) === String(cardId));
-    await supabaseClient.from('player_cards').update({ used: true, used_targets: targets }).eq('id', cardId);
+    const { error } = await supabaseClient.from('player_cards').update({ used: true, used_targets: targets }).eq('id', cardId);
+    if (error) { console.error('Ошибка использования спецусловия:', error); return alert('Не удалось использовать спецусловие: ' + error.message); }
     const myName = (state.players.find(p => p.id === state.playerId) || {}).name || state.playerName;
     const targetNames = targets.map(id => (state.players.find(p => p.id === id) || {}).name).filter(Boolean);
     await dbInsertEvent(state.currentRoomCode, state.room.current_round, 'neutral',
@@ -1404,8 +1358,10 @@ async function actionRevealTrait(cardId) {
         if (!room.final_reveal_unlocked) return alert('Ведущий ещё не разрешил открывать последнюю характеристику.');
         const card = state.myCardCache || [];
         const target = card.find(c => String(c.id) === String(cardId));
-        if (!target || target.revealed) return;
-        await supabaseClient.from('player_cards').update({ revealed: true, round_revealed: room.current_round }).eq('id', cardId);
+        if (!target) return alert('Характеристика не найдена, попробуйте обновить страницу.');
+        if (target.revealed) return;
+        const { error } = await supabaseClient.from('player_cards').update({ revealed: true, round_revealed: room.current_round }).eq('id', cardId);
+        if (error) { console.error('Ошибка открытия характеристики:', error); return alert('Не удалось открыть характеристику: ' + error.message); }
         loadMyCard();
         updateGameDynamic();
         return;
@@ -1417,10 +1373,11 @@ async function actionRevealTrait(cardId) {
     if (!active || active.id !== state.playerId) return alert('Сейчас не ваш ход.');
     const card = state.myCardCache || [];
     const target = card.find(c => String(c.id) === String(cardId));
-    if (!target) return;
+    if (!target) return alert('Характеристика не найдена, попробуйте обновить страницу.');
     const check = canRevealCategory(card, room, target.category);
     if (!check.ok) return alert(check.reason);
-    await supabaseClient.from('player_cards').update({ revealed: true, round_revealed: room.current_round }).eq('id', cardId);
+    const { error } = await supabaseClient.from('player_cards').update({ revealed: true, round_revealed: room.current_round }).eq('id', cardId);
+    if (error) { console.error('Ошибка открытия характеристики:', error); return alert('Не удалось открыть характеристику: ' + error.message); }
     loadMyCard();
     updateGameDynamic();
 }
