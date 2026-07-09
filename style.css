@@ -96,4 +96,160 @@ input::placeholder { color: #888; }
 .ptable-name{font-weight:600; font-size:13px; text-align:right; overflow-wrap:anywhere;}
 .ptable-card-body{flex:1; display:flex; flex-direction:column; gap:6px; align-items:flex-start;}
 
+/* ==========================================
+   [ДОРАБОТКА] Анимации, полировка и фиксы
+   ========================================== */
+
+/* 1. ИСПРАВЛЕНИЕ БАГА: Убираем фиолетовый цвет хоста, приводим к стилю опасности/внимания */
+.host-strip {
+  border-color: var(--hazard) !important; /* Заменяет ошибочный #9b7fd4 */
+  background: linear-gradient(90deg, rgba(211, 160, 38, 0.1) 0%, var(--void) 100%);
+}
+
+/* 2. АНИМАЦИИ: Пульсация говорящего игрока */
+@keyframes speaking-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(211, 160, 38, 0.6); }
+  70% { box-shadow: 0 0 0 8px rgba(211, 160, 38, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(211, 160, 38, 0); }
+}
+
+.ptable-card.speaking {
+  animation: speaking-pulse 1.5s infinite;
+  border-color: var(--hazard);
+}
+
+/* Анимация для таймера (когда время < 10 сек) */
+@keyframes countdown-panic {
+  0%, 100% { transform: scale(1); background: var(--hazard); }
+  50% { transform: scale(1.02); background: var(--danger); color: white; }
+}
+
+.countdown-banner.panic {
+  animation: countdown-panic 0.8s infinite;
+}
+
+/* Плавное появление предупреждений */
+.warning.active {
+  display: block;
+  animation: slideDown 0.3s ease-out;
+}
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* 3. СЕКРЕТНАЯ КАРТОЧКА ИГРОКА (внутри #myCardPanel) */
+.my-role-card {
+  background: linear-gradient(145deg, #1f2317 0%, #15170f 100%);
+  border: 2px solid var(--hazard);
+  border-radius: 10px;
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--hazard);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5), inset 0 1px 0 rgba(211, 160, 38, 0.2);
+  position: relative;
+  overflow: hidden;
+}
+
+.my-role-card::before {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: radial-gradient(circle, rgba(211, 160, 38, 0.05) 0%, transparent 60%);
+  pointer-events: none;
+}
+
+.my-role-card .role-title {
+  font-family: 'Arial Black', sans-serif;
+  font-size: 1.5rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-bottom: 8px;
+  position: relative;
+}
+
+.my-role-card .role-desc {
+  font-size: 13px;
+  color: var(--paper);
+  opacity: 0.8;
+  line-height: 1.4;
+  position: relative;
+}
+
+/* 4. КАСТОМНЫЕ СКРОЛЛБАРЫ (для чата и событий) */
+.chat-messages::-webkit-scrollbar,
+.events-feed::-webkit-scrollbar,
+.prop-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.chat-messages::-webkit-scrollbar-track,
+.events-feed::-webkit-scrollbar-track {
+  background: var(--void);
+  border-radius: 3px;
+}
+
+.chat-messages::-webkit-scrollbar-thumb,
+.events-feed::-webkit-scrollbar-thumb {
+  background: var(--moss);
+  border-radius: 3px;
+}
+
+.chat-messages::-webkit-scrollbar-thumb:hover,
+.events-feed::-webkit-scrollbar-thumb:hover {
+  background: var(--hazard);
+}
+
+/* 5. МОБИЛЬНЫЕ ДОРАБОТКИ ДЛЯ ИГРОВОГО СТОЛА */
+@media (max-width: 760px) {
+  /* На маленьких экранах карточки игроков в 2 колонки, иначе они сжимаются */
+  .ptable-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+  
+  .game-layout {
+    gap: 12px;
+  }
+  
+  /* Чат поднимаем выше или делаем компактнее на мобилках */
+  .chat-box {
+    height: 220px;
+  }
+  
+  h1 {
+    font-size: 1.8rem;
+  }
+}
+
+@media (max-width: 400px) {
+  /* Экстремально маленькие экраны (iPhone SE и др.) */
+  .ptable-grid {
+    grid-template-columns: 1fr !important; /* В одну колонку */
+  }
+  .settings-grid {
+    grid-template-columns: 1fr; /* Настройки в одну колонку */
+  }
+}
+
+/* 6. МИКРО-УЛУЧШЕНИЯ ИНТЕРФЕЙСА */
+/* Подсветка строки игрока при наведении (в лобби и на столе) */
+.player-list li:hover,
+.ptable-card:not(.eliminated):hover {
+  background: #252818;
+  border-color: #5a5e38;
+}
+
+/* Стили для ников в чате, чтобы они не сливались с текстом */
+.chat-message .sender {
+  margin-right: 6px;
+}
+
+/* Фикс для длинных слов в карточках игроков (чтобы не ломали верстку) */
+.ptable-name, .player-name {
+  word-break: break-word;
+}
 #myCardPanel{min-height:220px;}
