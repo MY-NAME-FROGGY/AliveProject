@@ -289,6 +289,12 @@ async function dbFetchPresetsForScenario(scenarioId) {
     return data || [];
 }
 
+async function dbFetchScenarioIdsWithPresets() {
+    const { data, error } = await supabaseClient.from('preset_characters').select('scenario_id');
+    if (error) { console.error(error); return new Set(); }
+    return new Set((data || []).map(r => r.scenario_id));
+}
+
 async function dbFetchPresetTraits(presetId) {
     const { data, error } = await supabaseClient.from('preset_character_traits').select('*').eq('preset_id', presetId);
     if (error) { console.error(error); return []; }
@@ -894,17 +900,22 @@ async function openCatalog() {
     stopPolling();
     state.view = 'catalog';
     state.catalog = await dbFetchScenarios();
+    state.catalogPresetIds = await dbFetchScenarioIdsWithPresets();
     renderCatalog();
 }
 
 function renderCatalog() {
+    const presetIds = state.catalogPresetIds || new Set();
     document.getElementById('app').innerHTML = `
         <h1>ОСТАТЬСЯ <span>В ЖИВЫХ</span></h1>
         <div class="hazard-strip"></div>
         <button class="btn btn-ghost" onclick="backToLobby()">← Назад в лобби</button>
         <h2 style="margin-top:16px;">Каталог сценариев</h2>
         ${state.catalog.length === 0 ? '<p class="muted-note">Сценариев пока нет в базе.</p>' : ''}
-        ${state.catalog.map(s => `<div class="scenario-card" onclick="openScenarioDetail('${s.id}')"><h3 style="margin:0;">${escapeHtml(s.title)}</h3></div>`).join('')}
+        ${state.catalog.map(s => `<div class="scenario-card" onclick="openScenarioDetail('${s.id}')">
+            <h3 style="margin:0;">${escapeHtml(s.title)}</h3>
+            ${presetIds.has(s.id) ? '<p class="muted-note" style="margin-top:4px;">🎭 есть готовые карточки персонажей</p>' : ''}
+        </div>`).join('')}
     `;
 }
 
