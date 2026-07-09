@@ -282,6 +282,19 @@ async function dbFetchScenarioDetail(id) {
     };
 }
 
+// ---------- Готовые карточки персонажей (привязаны к сценарию) ----------
+async function dbFetchPresetsForScenario(scenarioId) {
+    const { data, error } = await supabaseClient.from('preset_characters').select('id,label').eq('scenario_id', scenarioId);
+    if (error) { console.error('Ошибка загрузки готовых карточек:', error); return []; }
+    return data || [];
+}
+
+async function dbFetchPresetTraits(presetId) {
+    const { data, error } = await supabaseClient.from('preset_character_traits').select('*').eq('preset_id', presetId);
+    if (error) { console.error(error); return []; }
+    return data || [];
+}
+
 // ==========================================
 // ГЕНЕРАЦИЯ КАРТОЧЕК ПЕРСОНАЖЕЙ
 // ==========================================
@@ -414,6 +427,45 @@ async function generateCardsForRoom(roomCode, players, hostId) {
     }
 }
 
+// Готовые карточки персонажей, привязанные к сценарию. Если пресетов не хватает на всех
+// игроков — оставшимся генерируем случайно (по той же логике, что и обычный режим),
+// чтобы нехватка контента не блокировала старт игры.
+async function assignPresetCardsForRoom(roomCode, players, hostId, scenarioId) {
+    const already = await dbCardsExist(roomCode);
+    if (already) return;
+
+    const eligible = players.filter(p => p.id !== hostId);
+    const presets = await dbFetchPresetsForScenario(scenarioId);
+
+    if (presets.length === 0) {
+        console.error('У сценария нет готовых карточек — переключаюсь на случайную генерацию.');
+        return generateCardsForRoom(roomCode, players, hostId);
+    }
+
+    const shuffledPresets = shuffleArray(presets);
+    const shuffledPlayers = shuffleArray(eligible);
+    let pool = null; // подтягиваем только если реально понадобится (не хватило пресетов)
+
+    for (let i = 0; i < shuffledPlayers.length; i++) {
+        const p = shuffledPlayers[i];
+        if (i < shuffledPresets.length) {
+            const traits = await dbFetchPresetTraits(shuffledPresets[i].id);
+            const rows = traits.map(t => ({
+                room_code: roomCode, player_id: p.id, category: t.category,
+                pool_id: null, text: t.text, value: t.value, revealed: false
+            }));
+            const { error } = await supabaseClient.from('player_cards').insert(rows);
+            if (error) console.error('Ошибка назначения готовой карточки игроку ' + p.id + ':', error);
+        } else {
+            if (pool === null) pool = await dbFetchCharacterPool();
+            if (pool.length > 0) {
+                const card = generateBalancedCard(pool);
+                await dbInsertPlayerCard(roomCode, p.id, card);
+            }
+        }
+    }
+}
+
 async function selectActiveBonusIds(scenarioId, playerCount) {
     if (!scenarioId) return [];
     const { bonus } = await dbFetchScenarioDetail(scenarioId);
@@ -475,7 +527,11 @@ async function pollTick() {
             state.cardsGenerationInFlight = true;
             try {
                 // [ИСПРАВЛЕНО 1] Передаем host_id в генератор карт
-                await generateCardsForRoom(state.currentRoomCode, players, room.host_id);
+                if (room.card_mode === 'preset') {
+                    await assignPresetCardsForRoom(state.currentRoomCode, players, room.host_id, room.scenario_id);
+                } else {
+                    await generateCardsForRoom(state.currentRoomCode, players, room.host_id);
+                }
                 const activeBonusIds = await selectActiveBonusIds(room.scenario_id, players.length);
                 // [ФИКС] room 1-й фазы "reveal" никогда не получал таймер, даже если он задан в настройках —
                 // отсюда впечатление, что настройки таймеров вообще не влияют на игру.
@@ -827,7 +883,8 @@ function syncGamePhaseTimerTicker() {
 async function loadScenarioSummary(id) {
     const { scenario } = await dbFetchScenarioDetail(id);
     const el = document.getElementById('scenarioSummary');
-    if (el && scenario) el.textContent = scenario.title;
+    const modeLabel = state.room?.card_mode === 'preset' ? ' (готовые карточки)' : ' (случайная генерация)';
+    if (el && scenario) el.textContent = scenario.title + modeLabel;
 }
 
 // ==========================================
@@ -856,11 +913,13 @@ async function openScenarioDetail(id) {
     stopPolling();
     state.view = 'scenarioDetail';
     state.viewingScenario = await dbFetchScenarioDetail(id);
+    state.viewingPresets = await dbFetchPresetsForScenario(id);
     renderScenarioDetail();
 }
 
 function renderScenarioDetail() {
     const { scenario, base, bonus } = state.viewingScenario;
+    const presets = state.viewingPresets || [];
     const isHost = state.room && state.room.host_id === state.playerId;
     document.getElementById('app').innerHTML = `
         <h1>ОСТАТЬСЯ <span>В ЖИВЫХ</span></h1>
@@ -876,12 +935,20 @@ function renderScenarioDetail() {
             <h3>Дополнительные свойства (в игре выпадет 2–4 из ${bonus.length})</h3>
             <ul class="prop-list">${bonus.map(p => `<li class="bonus"><span class="prop-tag">Бонус</span>${escapeHtml(p.text)}</li>`).join('')}</ul>
         </div>
-        ${isHost ? `<button class="btn btn-primary" onclick="confirmScenario('${scenario.id}')">Выбрать этот сценарий</button>` : ''}
+        ${presets.length > 0 ? `<div class="panel">
+            <h3>Готовые карточки персонажей (${presets.length} шт.)</h3>
+            <p class="muted-note">У этого сценария есть заранее написанные карточки. Если игроков больше, чем готовых карточек — остальным сгенерируются случайные.</p>
+            <ul class="prop-list">${presets.map(pr => `<li>${escapeHtml(pr.label)}</li>`).join('')}</ul>
+        </div>` : ''}
+        ${isHost ? `
+            <button class="btn btn-primary" onclick="confirmScenario('${scenario.id}', 'random')">Выбрать этот сценарий (случайная генерация)</button>
+            ${presets.length > 0 ? `<button class="btn btn-primary" onclick="confirmScenario('${scenario.id}', 'preset')" style="margin-left:8px;">Выбрать с готовыми карточками</button>` : ''}
+        ` : ''}
     `;
 }
 
-async function confirmScenario(id) {
-    await dbUpdateRoom(state.currentRoomCode, { scenario_id: id });
+async function confirmScenario(id, cardMode) {
+    await dbUpdateRoom(state.currentRoomCode, { scenario_id: id, card_mode: cardMode || 'random' });
     backToLobby();
 }
 
