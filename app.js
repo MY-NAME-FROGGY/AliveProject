@@ -233,9 +233,11 @@ async function actionSetOutlineColor(c) { await dbSetCustomization(state.current
 
 function renderCustomizationPicker() {
     const me = state.players.find(p => p.id === state.playerId) || {};
-    const avatarsHtml = AVATAR_OPTIONS.map(a =>
-        `<button class="btn btn-sm ${me.avatar === a ? 'btn-primary' : 'btn-ghost'}" onclick="actionSetAvatar('${a}')" style="font-size:18px; padding:6px 10px;">${a}</button>`
-    ).join('');
+ const avatarsHtml = AVATAR_OPTIONS.map(a =>
+`<button class="btn btn-sm ${me.avatar === a ? 'btn-primary' : 'btn-ghost'}" onclick="actionSetAvatar('${a}')" style="padding:4px; width:72px; height:72px; overflow:hidden;">
+    <img src="${a}" alt="avatar" style="width:100%; height:100%; object-fit:cover; border-radius:4px; display:block;">
+</button>`
+).join('');
 
     const swatches = (current, setter) => COLOR_OPTIONS.map(c =>
         `<button onclick="${setter}('${c}')" title="${c}" style="width:28px; height:28px; border-radius:50%; background:${c}; border:2px solid ${current === c ? 'var(--paper)' : 'transparent'}; cursor:pointer; margin:3px; padding:0;"></button>`
