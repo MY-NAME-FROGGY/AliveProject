@@ -826,7 +826,9 @@ function renderPlayerRow(p, room, isHost) {
     return `
         <li>
             <span style="display:flex; align-items:center; gap:8px;">
-                ${p.avatar ? `<span style="font-size:18px;">${p.avatar}</span>` : ''}
+               ${p.avatar ? (p.avatar.startsWith('/avatars/') || p.avatar.startsWith('http') ?
+`<img src="${p.avatar}" style="width:32px; height:32px; border-radius:50%; object-fit:cover; margin-right:4px; vertical-align:middle; border:1px solid #4a4e28;">` :
+`<span style="font-size:18px;">${p.avatar}</span>`) : ''}
                 <span class="player-name" style="${nameColorStyle(p)}">${p.seat_number ? '№' + p.seat_number + ' ' : ''}${escapeHtml(p.name)}${isMe ? ' (Вы)' : ''}</span>
                 ${isHostRow ? '<span class="host-badge">Ведущий</span>' : ''}
                 <span class="badge ${p.is_ready ? 'badge-ready' : 'badge-notready'}">${p.is_ready ? 'Готов' : 'Не готов'}</span>
