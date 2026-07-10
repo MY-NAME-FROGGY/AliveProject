@@ -25,12 +25,19 @@ try {
 // ==========================================
 // СОСТОЯНИЕ
 // ==========================================
+// [ИСПРАВЛЕНО] Добавлены fact1, fact2 и goal. Убрана абстрактная 'fact'.
 const CATEGORY_LABELS = {
-    bio: 'БИО', profession: 'Профессия', hobby: 'Хобби', fact: 'Факт',
-    health: 'Здоровье', phobia: 'Фобия', luggage_big: 'Большой багаж',
-    luggage_small: 'Малый багаж', trait: 'Черта характера', special_condition: 'Спец.условие'
+    bio: 'БИО', profession: 'Профессия', hobby: 'Хобби', 
+    fact1: 'Факт 1', fact2: 'Факт 2', 
+    health: 'Здоровье', phobia: 'Фобия', 
+    luggage_big: 'Большой багаж', luggage_small: 'Малый багаж', 
+    trait: 'Черта характера', special_condition: 'Спец.условие',
+    goal: 'Цель' // Только для отображения, не участвует в случайной генерации
 };
-const CATEGORY_LIST = Object.keys(CATEGORY_LABELS);
+
+// [ИСПРАВЛЕНО] Список категорий для БАЛАНСИРОВАННОЙ генерации. 
+// 'goal' НЕ добавляем сюда, так как в character_pool нет записей с категорией goal.
+const CATEGORY_LIST = Object.keys(CATEGORY_LABELS).filter(k => k !== 'goal');
 
 const AVATAR_OPTIONS = ['🧑‍🚀','🧑‍⚕️','🧑‍🌾','🧑‍🍳','🧑‍🔬','🧑‍🎨','🧑‍🏫','🧑‍💻','🧑‍🚒','🧑‍✈️','🥷','🧟','🧛','🧙','🦸','🐺','🦊','🐻','🐱','🐧'];
 const COLOR_OPTIONS = ['#e9e3d0','#d3a026','#a63d2f','#5b6b48','#5b8a4a','#9b7fd4','#4a90a4','#c97b3d','#7a5c1e','#b04a6a'];
@@ -114,7 +121,7 @@ async function dbCreateRoom(hostName) {
         code, host_id: state.playerId, phase: 'lobby', settings: defaultSettings()
     });
     if (roomErr) throw roomErr;
-    
+
     const { error: playerErr } = await supabaseClient.from('players').insert({
         id: state.playerId, room_code: code, name: hostName, is_ready: false
     });
@@ -126,10 +133,10 @@ async function dbJoinRoom(code, name) {
     const { data: room, error: roomErr } = await supabaseClient.from('rooms').select('').eq('code', code).maybeSingle();
     if (roomErr || !room) throw new Error('Комната не найдена. Проверьте код.');
     if (room.phase !== 'lobby') throw new Error('Игра уже началась, присоединиться нельзя.');
-    
+
     const { data: players, error: playersErr } = await supabaseClient.from('players').select('').eq('room_code', code);
     if (playersErr) throw playersErr;
-    
+
     const already = players.find(p => p.id === state.playerId);
     if (!already) {
         const max = room.settings?.max_players;
@@ -189,7 +196,6 @@ async function dbSetReady(code, ready) {
     await supabaseClient.from('players').update({ is_ready: ready }).eq('id', state.playerId).eq('room_code', code);
 }
 
-// ---------- Выбор места за столом (номер сохраняется у игрока и виден в лобби и в игре) ----------
 async function dbSetSeat(roomCode, playerId, seatNumber) {
     const { error } = await supabaseClient.from('players').update({ seat_number: seatNumber }).eq('id', playerId).eq('room_code', roomCode);
     if (error) console.error('Ошибка выбора места:', error);
@@ -216,11 +222,11 @@ function renderSeatPicker(room) {
     return html;
 }
 
-// ---------- Кастомизация (аватар + цвета) — задаётся в лобби, действует и в игре ----------
 async function dbSetCustomization(roomCode, playerId, patch) {
     const { error } = await supabaseClient.from('players').update(patch).eq('id', playerId).eq('room_code', roomCode);
     if (error) console.error('Ошибка сохранения кастомизации:', error);
 }
+
 async function actionSetAvatar(a) { await dbSetCustomization(state.currentRoomCode, state.playerId, { avatar: a }); }
 async function actionSetColor(c) { await dbSetCustomization(state.currentRoomCode, state.playerId, { color: c }); }
 async function actionSetOutlineColor(c) { await dbSetCustomization(state.currentRoomCode, state.playerId, { outline_color: c }); }
@@ -230,22 +236,23 @@ function renderCustomizationPicker() {
     const avatarsHtml = AVATAR_OPTIONS.map(a =>
         `<button class="btn btn-sm ${me.avatar === a ? 'btn-primary' : 'btn-ghost'}" onclick="actionSetAvatar('${a}')" style="font-size:18px; padding:6px 10px;">${a}</button>`
     ).join('');
+
     const swatches = (current, setter) => COLOR_OPTIONS.map(c =>
         `<button onclick="${setter}('${c}')" title="${c}" style="width:28px; height:28px; border-radius:50%; background:${c}; border:2px solid ${current === c ? 'var(--paper)' : 'transparent'}; cursor:pointer; margin:3px; padding:0;"></button>`
     ).join('');
-    return `
-        <h3 style="margin-top:4px;">Аватар</h3>
-        <div style="display:flex; flex-wrap:wrap; gap:6px;">${avatarsHtml}</div>
-        <h3 style="margin-top:12px;">Цвет ника</h3>
-        <div style="display:flex; flex-wrap:wrap;">${swatches(me.color, 'actionSetColor')}</div>
-        <h3 style="margin-top:12px;">Цвет обводки карточки</h3>
-        <div style="display:flex; flex-wrap:wrap;">${swatches(me.outline_color, 'actionSetOutlineColor')}</div>
-    `;
+
+    return `<h3 style="margin-top:4px;">Аватар</h3>
+            <div style="display:flex; flex-wrap:wrap; gap:6px;">${avatarsHtml}</div>
+            <h3 style="margin-top:12px;">Цвет ника</h3>
+            <div style="display:flex; flex-wrap:wrap;">${swatches(me.color, 'actionSetColor')}</div>
+            <h3 style="margin-top:12px;">Цвет обводки карточки</h3>
+            <div style="display:flex; flex-wrap:wrap;">${swatches(me.outline_color, 'actionSetOutlineColor')}</div>`;
 }
 
 function avatarChip(p) {
     return `<div class="ptable-avatar" style="border-color:${p.outline_color || '#4a4e28'};">${p.avatar || ''}</div>`;
 }
+
 function nameColorStyle(p) {
     return p.color ? `color:${p.color};` : '';
 }
@@ -282,7 +289,6 @@ async function dbFetchScenarioDetail(id) {
     };
 }
 
-// ---------- Готовые карточки персонажей (привязаны к сценарию) ----------
 async function dbFetchPresetsForScenario(scenarioId) {
     const { data, error } = await supabaseClient.from('preset_characters').select('id,label').eq('scenario_id', scenarioId);
     if (error) { console.error('Ошибка загрузки готовых карточек:', error); return []; }
@@ -314,16 +320,20 @@ function shuffleArray(arr) {
 }
 
 function generateBalancedCard(pool) {
+    // [ИСПРАВЛЕНО] Теперь CATEGORY_LIST содержит fact1 и fact2, и они корректно генерируются
     const categories = shuffleArray(CATEGORY_LIST);
     const half = Math.ceil(categories.length / 2);
     const positiveCats = new Set(categories.slice(0, half));
+
     const card = [];
     for (const cat of CATEGORY_LIST) {
         const items = pool.filter(p => p.category === cat);
         if (items.length === 0) continue;
+
         const wantPositive = positiveCats.has(cat);
         let candidates = items.filter(p => wantPositive ? p.value >= 0 : p.value <= 0);
         if (candidates.length === 0) candidates = items;
+
         const pick = candidates[Math.floor(Math.random() * candidates.length)];
         card.push({ category: cat, pool_id: pick.id, text: pick.text, value: pick.value });
     }
@@ -363,7 +373,6 @@ async function dbClearCards(roomCode) {
     if (error) console.error('Ошибка очистки player_cards:', error);
 }
 
-// ---------- Личные заметки игрока (приватные) ----------
 async function dbFetchNote(roomCode, playerId) {
     const { data, error } = await supabaseClient.from('notes')
         .select('*').eq('room_code', roomCode).eq('player_id', playerId).maybeSingle();
@@ -377,7 +386,6 @@ async function dbSaveNote(roomCode, playerId, text) {
     if (error) console.error('Ошибка сохранения заметки:', error);
 }
 
-// ---------- Ивенты ведущего ----------
 async function dbFetchEvents(roomCode) {
     const { data, error } = await supabaseClient.from('game_events')
         .select('*').eq('room_code', roomCode).order('created_at', { ascending: false }).limit(30);
@@ -397,7 +405,6 @@ async function dbClearEvents(roomCode) {
     if (error) console.error('Ошибка очистки game_events:', error);
 }
 
-// ---------- Голосование ----------
 async function dbClearVotes(roomCode) {
     const { error } = await supabaseClient.from('votes').delete().eq('room_code', roomCode);
     if (error) console.error('Ошибка очистки votes:', error);
@@ -417,32 +424,30 @@ async function dbFetchVoteCount(roomCode, round) {
     return count || 0;
 }
 
-// [ИСПРАВЛЕНО 1] Добавлен параметр hostId, чтобы пропускать ведущего
 async function generateCardsForRoom(roomCode, players, hostId) {
     const already = await dbCardsExist(roomCode);
     if (already) return;
+
     const pool = await dbFetchCharacterPool();
     if (pool.length === 0) {
         console.error('character_pool пуст — карточки не сгенерированы.');
         return;
     }
+
     for (const p of players) {
-        if (p.id === hostId) continue; // Пропускаем ведущего
+        if (p.id === hostId) continue;
         const card = generateBalancedCard(pool);
         await dbInsertPlayerCard(roomCode, p.id, card);
     }
 }
 
-// Готовые карточки персонажей, привязанные к сценарию. Если пресетов не хватает на всех
-// игроков — оставшимся генерируем случайно (по той же логике, что и обычный режим),
-// чтобы нехватка контента не блокировала старт игры.
 async function assignPresetCardsForRoom(roomCode, players, hostId, scenarioId) {
     const already = await dbCardsExist(roomCode);
     if (already) return;
 
     const eligible = players.filter(p => p.id !== hostId);
     const presets = await dbFetchPresetsForScenario(scenarioId);
-
+    
     if (presets.length === 0) {
         console.error('У сценария нет готовых карточек — переключаюсь на случайную генерацию.');
         return generateCardsForRoom(roomCode, players, hostId);
@@ -450,7 +455,7 @@ async function assignPresetCardsForRoom(roomCode, players, hostId, scenarioId) {
 
     const shuffledPresets = shuffleArray(presets);
     const shuffledPlayers = shuffleArray(eligible);
-    let pool = null; // подтягиваем только если реально понадобится (не хватило пресетов)
+    let pool = null;
 
     for (let i = 0; i < shuffledPlayers.length; i++) {
         const p = shuffledPlayers[i];
@@ -476,10 +481,12 @@ async function selectActiveBonusIds(scenarioId, playerCount) {
     if (!scenarioId) return [];
     const { bonus } = await dbFetchScenarioDetail(scenarioId);
     if (!bonus || bonus.length === 0) return [];
+
     let count = 2;
     if (playerCount >= 9) count = 4;
     else if (playerCount >= 6) count = 3;
     count = Math.min(count, bonus.length);
+
     return shuffleArray(bonus).slice(0, count).map(b => b.id);
 }
 
@@ -499,6 +506,7 @@ function stopPolling() {
 
 async function pollTick() {
     if (!state.currentRoomCode) return;
+
     const room = await dbFetchRoom(state.currentRoomCode);
     if (!room) {
         saveRoomCode(null); state.room = null; stopPolling();
@@ -506,6 +514,7 @@ async function pollTick() {
         renderHome();
         return;
     }
+
     const players = await dbFetchPlayers(state.currentRoomCode);
     const me = players.find(p => p.id === state.playerId);
     if (!me) {
@@ -514,8 +523,10 @@ async function pollTick() {
         renderHome();
         return;
     }
+
     state.room = room;
     state.players = players;
+
     const isHost = room.host_id === state.playerId;
 
     if (isHost && room.phase === 'starting') {
@@ -525,24 +536,17 @@ async function pollTick() {
             alert('Старт отменён: ' + notReady.name + ' не готов(а).');
             room.phase = 'lobby';
         } else if (room.countdown_ends_at && new Date(room.countdown_ends_at) <= new Date() && !state.cardsGenerationInFlight) {
-            // [ФИКС] pollTick идёт раз в 2 сек; если генерация карточек (несколько последовательных
-            // insert-запросов) не успевает уложиться в 2 сек — что гораздо вероятнее на медленном/мобильном
-            // соединении, чем на десктопном wifi — следующий тик мог повторно войти сюда, пока room.phase
-            // в БД ещё не сменился на 'game'. Это давало параллельную генерацию и конфликт unique-constraint
-            // на part игроков, у которых insert проигрывал гонку — карточка у них просто не появлялась.
             state.cardsGenerationInFlight = true;
             try {
-                // [ИСПРАВЛЕНО 1] Передаем host_id в генератор карт
                 if (room.card_mode === 'preset') {
                     await assignPresetCardsForRoom(state.currentRoomCode, players, room.host_id, room.scenario_id);
                 } else {
                     await generateCardsForRoom(state.currentRoomCode, players, room.host_id);
                 }
                 const activeBonusIds = await selectActiveBonusIds(room.scenario_id, players.length);
-                // [ФИКС] room 1-й фазы "reveal" никогда не получал таймер, даже если он задан в настройках —
-                // отсюда впечатление, что настройки таймеров вообще не влияют на игру.
                 const revealSeconds = phaseDuration('reveal');
                 const revealEnds = revealSeconds > 0 ? new Date(Date.now() + revealSeconds * 1000).toISOString() : null;
+                
                 await dbUpdateRoom(state.currentRoomCode, {
                     phase: 'game', current_round: 1, current_phase: 'reveal',
                     phase_ends_at: revealEnds, phase_running: revealSeconds > 0, phase_paused_remaining: null,
@@ -557,6 +561,7 @@ async function pollTick() {
     }
 
     state.view = room.phase === 'game' ? 'game' : 'lobby';
+
     if (state.view === 'lobby') {
         state.chat = await dbFetchChat(state.currentRoomCode);
         if (state.lastRenderedView !== 'lobby') { renderLobby(); state.lastRenderedView = 'lobby'; }
@@ -582,7 +587,7 @@ function showWarning(msg) {
 }
 
 function escapeHtml(str) {
-    return String(str).replace(/[&<>"']/g, s => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[s]));
+    return String(str).replace(/[&<>"']/g, s => ({ '&': '&', '<': '<', '>': '>', '"': '"', "'": "'" }[s]));
 }
 
 // ==========================================
@@ -619,6 +624,7 @@ function renderLobby() {
     const room = state.room;
     const isHost = room.host_id === state.playerId;
     const settings = room.settings || {};
+
     document.getElementById('app').innerHTML = `
         <h1>ОСТАТЬСЯ <span>В ЖИВЫХ</span></h1>
         <div class="hazard-strip"></div>
@@ -668,8 +674,10 @@ function renderLobby() {
             <button class="btn btn-ghost" onclick="actionLeaveRoom()">← Выйти в меню</button>
         </div>
     `;
+
     if (room.scenario_id) loadScenarioSummary(room.scenario_id);
     if (isHost) regenerateRoundBlocks();
+
     state.lastSeenSettings = JSON.stringify(settings);
     state.lastSeenScenarioId = room.scenario_id;
     updateLobbyDynamic();
@@ -702,15 +710,14 @@ function renderSettingsReadonly(s) {
         const labels = (slots || []).map(t => t === 'any' ? 'любая' : (CATEGORY_LABELS[t] || t));
         return `Раунд ${i + 1}: ${labels.length} (${labels.join(', ')})`;
     }).join(' · ');
-    return `
-        <div class="readonly-settings">
-            Игроков: ${s.min_players ?? '?'}–${s.max_players ?? '?'} · Нужно выживших: ${s.target_survivors ?? '?'}<br>
-            Раундов: ${s.rounds ?? '?'}<br>
-            ${roundSummary ? '<div class="muted-note">' + roundSummary + '</div>' : ''}
-            Фазы: открытие ${s.phase_seconds?.reveal ?? '?'}с · обсуждение ${s.phase_seconds?.discussion ?? '?'}с · оправдание ${s.phase_seconds?.defense ?? '?'}с · голосование ${s.phase_seconds?.voting ?? '?'}с<br>
-            Личные чаты: ${s.private_chat_enabled ? 'включены' : 'выключены'}
-        </div>
-    `;
+
+    return `<div class="readonly-settings">
+        Игроков: ${s.min_players ?? '?'}–${s.max_players ?? '?'} · Нужно выживших: ${s.target_survivors ?? '?'}<br>
+        Раундов: ${s.rounds ?? '?'}<br>
+        ${roundSummary ? '<div class="muted-note">' + roundSummary + '</div>' : ''}
+        Фазы: открытие ${s.phase_seconds?.reveal ?? '?'}с · обсуждение ${s.phase_seconds?.discussion ?? '?'}с · оправдание ${s.phase_seconds?.defense ?? '?'}с · голосование ${s.phase_seconds?.voting ?? '?'}с<br>
+        Личные чаты: ${s.private_chat_enabled ? 'включены' : 'выключены'}
+    </div>`;
 }
 
 function regenerateRoundBlocks() {
@@ -719,16 +726,21 @@ function regenerateRoundBlocks() {
     const rounds = Math.max(1, parseInt(roundsInput.value) || 1);
     const container = document.getElementById('roundBlocksContainer');
     const current = state.room?.settings?.round_reveals || [];
+
     let html = '';
     for (let i = 0; i < rounds; i++) {
         const count = (current[i] && current[i].length) || 1;
-        html += `<div style="background:var(--void); border-radius:4px; padding:8px 10px; margin-bottom:8px;">
-            <div style="display:flex; align-items:center; gap:10px;">
-                <strong style="width:80px; flex-shrink:0;">Раунд ${i + 1}</strong>
-                <label class="muted-note">характеристик: <input type="number" min="1" max="10" id="roundCount_${i}" value="${count}" onchange="regenerateRoundSlots(${i})" style="width:60px; display:inline-block; margin:0 0 0 4px;"></label>
+        html += `
+            <div style="background:var(--void); border-radius:4px; padding:8px 10px; margin-bottom:8px;">
+                <div style="display:flex; align-items:center; gap:10px;">
+                    <strong style="width:80px; flex-shrink:0;">Раунд ${i + 1}</strong>
+                    <label class="muted-note">характеристик: 
+                        <input type="number" min="1" max="10" id="roundCount_${i}" value="${count}" onchange="regenerateRoundSlots(${i})" style="width:60px; display:inline-block; margin:0 0 0 4px;">
+                    </label>
+                </div>
+                <div id="roundSlots_${i}" style="display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;"></div>
             </div>
-            <div id="roundSlots_${i}" style="display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;"></div>
-        </div>`;
+        `;
     }
     container.innerHTML = html;
     for (let i = 0; i < rounds; i++) regenerateRoundSlots(i, current[i]);
@@ -740,6 +752,7 @@ function regenerateRoundSlots(i, presetSlots) {
     const count = Math.max(1, Math.min(10, parseInt(countInput.value) || 1));
     const container = document.getElementById('roundSlots_' + i);
     if (!container) return;
+
     const current = presetSlots || (state.room?.settings?.round_reveals?.[i]) || [];
     let html = '';
     for (let j = 0; j < count; j++) {
@@ -757,6 +770,7 @@ function updateLobbyDynamic() {
     const room = state.room;
     const isHost = room.host_id === state.playerId;
     const me = state.players.find(p => p.id === state.playerId);
+
     const listEl = document.getElementById('playersList');
     if (listEl) listEl.innerHTML = state.players.map(p => renderPlayerRow(p, room, isHost)).join('');
 
@@ -768,7 +782,7 @@ function updateLobbyDynamic() {
 
     const countEl = document.getElementById('playerCount');
     if (countEl) countEl.innerText = state.players.length + (room.settings?.max_players ? ' / ' + room.settings.max_players : '');
-    
+
     const readyBtn = document.getElementById('readyToggleBtn');
     if (readyBtn && me) {
         readyBtn.textContent = me.is_ready ? 'Я готов ✔ (нажми, чтобы отменить)' : 'Не готов (нажми, когда будешь готов)';
@@ -801,6 +815,7 @@ function renderPlayerRow(p, room, isHost) {
     const isMe = p.id === state.playerId;
     const isHostRow = p.id === room.host_id;
     const timedOut = p.timeout_until && new Date(p.timeout_until) > new Date();
+
     return `
         <li>
             <span style="display:flex; align-items:center; gap:8px;">
@@ -912,10 +927,12 @@ function renderCatalog() {
         <button class="btn btn-ghost" onclick="backToLobby()">← Назад в лобби</button>
         <h2 style="margin-top:16px;">Каталог сценариев</h2>
         ${state.catalog.length === 0 ? '<p class="muted-note">Сценариев пока нет в базе.</p>' : ''}
-        ${state.catalog.map(s => `<div class="scenario-card" onclick="openScenarioDetail('${s.id}')">
-            <h3 style="margin:0;">${escapeHtml(s.title)}</h3>
-            ${presetIds.has(s.id) ? '<p class="muted-note" style="margin-top:4px;">🎭 есть готовые карточки персонажей</p>' : ''}
-        </div>`).join('')}
+        ${state.catalog.map(s => `
+            <div class="scenario-card" onclick="openScenarioDetail('${s.id}')">
+                <h3 style="margin:0;">${escapeHtml(s.title)}</h3>
+                ${presetIds.has(s.id) ? '<p class="muted-note" style="margin-top:4px;">🎭 есть готовые карточки персонажей</p>' : ''}
+            </div>
+        `).join('')}
     `;
 }
 
@@ -932,6 +949,7 @@ function renderScenarioDetail() {
     const { scenario, base, bonus } = state.viewingScenario;
     const presets = state.viewingPresets || [];
     const isHost = state.room && state.room.host_id === state.playerId;
+
     document.getElementById('app').innerHTML = `
         <h1>ОСТАТЬСЯ <span>В ЖИВЫХ</span></h1>
         <div class="hazard-strip"></div>
@@ -946,11 +964,13 @@ function renderScenarioDetail() {
             <h3>Дополнительные свойства (в игре выпадет 2–4 из ${bonus.length})</h3>
             <ul class="prop-list">${bonus.map(p => `<li class="bonus"><span class="prop-tag">Бонус</span>${escapeHtml(p.text)}</li>`).join('')}</ul>
         </div>
-        ${presets.length > 0 ? `<div class="panel">
-            <h3>Готовые карточки персонажей (${presets.length} шт.)</h3>
-            <p class="muted-note">У этого сценария есть заранее написанные карточки. Если игроков больше, чем готовых карточек — остальным сгенерируются случайные.</p>
-            <ul class="prop-list">${presets.map(pr => `<li>${escapeHtml(pr.label)}</li>`).join('')}</ul>
-        </div>` : ''}
+        ${presets.length > 0 ? `
+            <div class="panel">
+                <h3>Готовые карточки персонажей (${presets.length} шт.)</h3>
+                <p class="muted-note">У этого сценария есть заранее написанные карточки. Если игроков больше, чем готовых карточек — остальным сгенерируются случайные.</p>
+                <ul class="prop-list">${presets.map(pr => `<li>${escapeHtml(pr.label)}</li>`).join('')}</ul>
+            </div>
+        ` : ''}
         ${isHost ? `
             <button class="btn btn-primary" onclick="confirmScenario('${scenario.id}', 'random')">Выбрать этот сценарий (случайная генерация)</button>
             ${presets.length > 0 ? `<button class="btn btn-primary" onclick="confirmScenario('${scenario.id}', 'preset')" style="margin-left:8px;">Выбрать с готовыми карточками</button>` : ''}
@@ -970,7 +990,7 @@ function backToLobby() {
 }
 
 // ==========================================
-// [ИСПРАВЛЕНО 4] ЗАГРУЗКА ОТКРЫТЫХ ХАРАКТЕРИСТИК
+// ЗАГРУЗКА ОТКРЫТЫХ ХАРАКТЕРИСТИК
 // ==========================================
 async function fetchRevealedTraits() {
     const { data, error } = await supabaseClient.from('player_cards')
@@ -978,11 +998,11 @@ async function fetchRevealedTraits() {
         .eq('room_code', state.currentRoomCode)
         .eq('revealed', true);
     if (error) return {};
-    
+
     const traitsByPlayer = {};
     data.forEach(c => {
         if (!traitsByPlayer[c.player_id]) traitsByPlayer[c.player_id] = [];
-        traitsByPlayer[c.player_id].push({ cat: CATEGORY_LABELS[c.category], text: c.text });
+        traitsByPlayer[c.player_id].push({ cat: CATEGORY_LABELS[c.category] || c.category, text: c.text });
     });
     return traitsByPlayer;
 }
@@ -993,24 +1013,29 @@ async function fetchRevealedTraits() {
 function renderGameTable() {
     stopCountdownTick();
     const room = state.room;
+
     if (room.current_phase === 'awaiting_verdict' || room.current_phase === 'finished') {
         renderFinalPhaseTable();
         return;
     }
+
     const isHost = room.host_id === state.playerId;
     const meta = PHASE_META[room.current_phase] || { label: room.current_phase, icon: '❔', color: '#555', durationKey: null };
     const hasTimer = !!meta.durationKey;
+
     const nominees = room.nominees || [];
     const defenseIdx = room.defense_index || 0;
     const nominations = room.nominations || {};
     const myNomination = nominations[state.playerId];
 
     let phaseBody = '';
+
     if (room.current_phase === 'reveal') {
         const revealOrder = state.players.filter(p => p.id !== room.host_id);
         const revealIdx = room.reveal_index || 0;
         const active = revealOrder[revealIdx];
         const isMyTurn = active && active.id === state.playerId;
+
         phaseBody = `<p>Сейчас открывает характеристики: <strong>${escapeHtml(active ? active.name : '—')}</strong> (${revealOrder.length ? revealIdx + 1 : 0} из ${revealOrder.length})</p>` +
             (isMyTurn
                 ? '<p class="muted-note">Ваш ход — откройте характеристики на своей карточке ниже.</p>'
@@ -1018,6 +1043,7 @@ function renderGameTable() {
     } else if (room.current_phase === 'nomination') {
         const names = nominees.map(id => escapeHtml((state.players.find(p => p.id === id) || {}).name || '?')).join(', ');
         const myTargetName = myNomination ? escapeHtml((state.players.find(p => p.id === myNomination) || {}).name || '?') : null;
+
         phaseBody = `<p>Выставлено: <strong>${names || 'пока никто'}</strong></p>` +
             (myTargetName
                 ? `<p class="muted-note">Вы выставили: ${myTargetName} (изменить нельзя)</p>`
@@ -1028,6 +1054,7 @@ function renderGameTable() {
     } else if (room.current_phase === 'voting') {
         const names = nominees.map(id => escapeHtml((state.players.find(p => p.id === id) || {}).name || '?')).join(', ');
         const iAmHost = state.playerId === room.host_id;
+
         phaseBody = `<p>Кандидаты: <strong>${names || 'нет выставленных'}</strong></p>
             <p class="muted-note">Голосование слепое — выбор нельзя изменить. <span id="voteProgress"></span></p>` +
             (iAmHost ? '' : (state.myVoteThisRound
@@ -1086,6 +1113,7 @@ function renderGameTable() {
         ${renderGameChatPanel(room)}
         ${isHost ? `<button class="btn btn-ghost" style="margin-top:16px;" onclick="actionResetToLobby()">Сбросить в лобби (для теста)</button>` : ''}
     `;
+
     if (!isHost) loadMyCard();
     loadScenarioPanelGame();
     refreshEventsFeed();
@@ -1094,14 +1122,13 @@ function renderGameTable() {
     updateGameDynamic();
 }
 
-// [Финальная фаза] Стол — единственное функциональное поле на экране:
-// ведущий и оставшиеся (выбывшие тоже видны, но серые) до момента оглашения вердикта.
 function renderFinalPhaseTable() {
     const room = state.room;
     const isHost = room.host_id === state.playerId;
     const meta = PHASE_META[room.current_phase] || { label: room.current_phase, icon: '❔', color: '#555' };
 
     let phaseBody = '';
+
     if (room.current_phase === 'awaiting_verdict') {
         const alive = state.players.filter(p => p.id !== room.host_id && p.is_alive !== false);
         phaseBody = `<p>Финальный раунд. Оставшиеся: <strong>${alive.map(p => escapeHtml(p.name)).join(', ') || 'никто'}</strong></p>` +
@@ -1149,64 +1176,71 @@ function renderFinalPhaseTable() {
         </div>
         ${isHost ? `<button class="btn btn-ghost" style="margin-top:16px;" onclick="actionResetToLobby()">Сбросить в лобби (для теста)</button>` : ''}
     `;
-    loadMyCard(); // держим кэш карточки свежим — нужен для кнопки открытия последней характеристики на столе
+
+    loadMyCard();
     updateGameDynamic();
 }
 
 function renderGameChatPanel(room) {
     const privateEnabled = !!room.settings?.private_chat_enabled;
     const others = state.players.filter(p => p.id !== state.playerId);
-    return `<div class="panel">
-        <div class="section-title"><h2>Чат</h2>
-            ${privateEnabled ? `<select id="gameChatRecipient" onchange="switchGameChatRecipient()" style="width:auto; margin:0;">
-                <option value="">Общий чат</option>
-                ${others.map(p => `<option value="${p.id}" ${state.gameChatRecipient === p.id ? 'selected' : ''}>${escapeHtml(p.name)}${p.id === room.host_id ? ' (Ведущий)' : ''}</option>`).join('')}
-            </select>` : ''}
-        </div>
-        <div class="chat-box">
-            <div class="chat-messages" id="gameChatMessages"></div>
-            <div class="chat-input-row">
-                <input id="gameChatInput" placeholder="Сообщение..." onkeydown="handleGameChatKey(event)">
-                <button class="btn btn-primary btn-sm" onclick="actionSendGameChat()">➤</button>
+
+    return `
+        <div class="panel">
+            <div class="section-title"><h2>Чат</h2>
+                ${privateEnabled ? `
+                    <select id="gameChatRecipient" onchange="switchGameChatRecipient()" style="width:auto; margin:0;">
+                        <option value="">Общий чат</option>
+                        ${others.map(p => `<option value="${p.id}" ${state.gameChatRecipient === p.id ? 'selected' : ''}>${escapeHtml(p.name)}${p.id === room.host_id ? ' (Ведущий)' : ''}</option>`).join('')}
+                    </select>
+                ` : ''}
+            </div>
+            <div class="chat-box">
+                <div class="chat-messages" id="gameChatMessages"></div>
+                <div class="chat-input-row">
+                    <input id="gameChatInput" placeholder="Сообщение..." onkeydown="handleGameChatKey(event)">
+                    <button class="btn btn-primary btn-sm" onclick="actionSendGameChat()">➤</button>
+                </div>
             </div>
         </div>
-    </div>`;
+    `;
 }
 
 function renderHostToolsPanel(room) {
     const targets = state.players.filter(p => p.id !== room.host_id);
-    return `<div class="panel" id="hostToolsPanel">
-        <h2>Панель ведущего</h2>
-        <p class="muted-note">Личной карточки у ведущего нет — вместо неё инструменты, которые влияют на ход игры.</p>
 
-        <h3 style="margin-top:14px;">Составить событие</h3>
-        <div class="settings-grid">
-            <div class="settings-field">
-                <label>Кому</label>
-                <select id="eventTarget">
-                    <option value="">Всем игрокам</option>
-                    ${targets.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('')}
-                </select>
+    return `
+        <div class="panel" id="hostToolsPanel">
+            <h2>Панель ведущего</h2>
+            <p class="muted-note">Личной карточки у ведущего нет — вместо неё инструменты, которые влияют на ход игры.</p>
+            <h3 style="margin-top:14px;">Составить событие</h3>
+            <div class="settings-grid">
+                <div class="settings-field">
+                    <label>Кому</label>
+                    <select id="eventTarget">
+                        <option value="">Всем игрокам</option>
+                        ${targets.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('')}
+                    </select>
+                </div>
+                <div class="settings-field">
+                    <label>Тон</label>
+                    <select id="eventType">
+                        <option value="neutral">Нейтральное</option>
+                        <option value="positive">Позитивное</option>
+                        <option value="negative">Негативное</option>
+                    </select>
+                </div>
             </div>
-            <div class="settings-field">
-                <label>Тон</label>
-                <select id="eventType">
-                    <option value="neutral">Нейтральное</option>
-                    <option value="positive">Позитивное</option>
-                    <option value="negative">Негативное</option>
-                </select>
-            </div>
-        </div>
-        <input id="eventText" placeholder="Текст события, который увидят игроки...">
-        <button class="btn btn-primary btn-sm" onclick="actionSendEvent()">Отправить событие</button>
+            <input id="eventText" placeholder="Текст события, который увидят игроки...">
+            <button class="btn btn-primary btn-sm" onclick="actionSendEvent()">Отправить событие</button>
 
-        <h3 style="margin-top:16px;">Быстрые ивенты</h3>
-        <div style="display:flex; gap:8px; flex-wrap:wrap;">
-            <button class="btn btn-ghost btn-sm" onclick="actionQuickEvent('find')">⚡ Внеплановая находка</button>
-            <button class="btn btn-ghost btn-sm" onclick="actionQuickEvent('incident')">💥 ЧП в бункере</button>
-        </div>
-        <p class="muted-note" style="margin-top:8px;">«Находка» досрочно открывает ещё одно бонусное свойство бункера. «ЧП» на 60 секунд отнимает возможность говорить в чате у случайного игрока.</p>
-    </div>`;
+            <h3 style="margin-top:16px;">Быстрые ивенты</h3>
+            <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                <button class="btn btn-ghost btn-sm" onclick="actionQuickEvent('find')">⚡ Внеплановая находка</button>
+                <button class="btn btn-ghost btn-sm" onclick="actionQuickEvent('incident')">💥 ЧП в бункере</button>
+            </div>
+            <p class="muted-note" style="margin-top:8px;">«Находка» досрочно открывает ещё одно бонусное свойство бункера. «ЧП» на 60 секунд отнимает возможность говорить в чате у случайного игрока.</p>
+        </div>`;
 }
 
 function renderHostPhaseControls(room, hasTimer) {
@@ -1220,23 +1254,25 @@ function renderHostPhaseControls(room, hasTimer) {
             timerButtons = `<button class="btn btn-primary btn-sm" onclick="hostStartTimer()">Старт таймера</button>`;
         }
     }
+
     const advanceButton = `<button class="btn btn-danger btn-sm" onclick="hostAdvancePhase()">Далее →</button>`;
+
     return `<div style="margin-top:12px; display:flex; gap:8px; justify-content:center; flex-wrap:wrap;"> ${timerButtons} ${advanceButton} </div>`;
 }
 
-// [ИСПРАВЛЕНО 4] Функция стала async, чтобы подтягивать открытые характеристики
 async function updateGameDynamic() {
     const room = state.room;
     if (!room) return;
+
     const nominees = room.nominees || [];
     const defenseIdx = room.defense_index || 0;
     const revealIdx = room.reveal_index || 0;
     const revealOrder = state.players.filter(p => p.id !== room.host_id);
     const revealActiveId = (revealOrder[revealIdx] || {}).id;
+
     const nominations = room.nominations || {};
     const myNomination = nominations[state.playerId];
 
-    // Подтягиваем открытые характеристики всех игроков
     const revealedTraits = await fetchRevealedTraits();
 
     const hostP = state.players.find(p => p.id === room.host_id);
@@ -1261,12 +1297,10 @@ async function updateGameDynamic() {
             const canNominate = room.current_phase === 'nomination' && !isMe && !myNomination && state.playerId !== room.host_id && !isEliminated;
             const canVote = room.current_phase === 'voting' && !isMe && isNominated && state.playerId !== room.host_id && !state.myVoteThisRound;
 
-            // Рендерим открытые характеристики
             const traitsHtml = (revealedTraits[p.id] || []).map(t => 
                 `<div style="font-size:11px; color:#b7b190; margin-top:2px;"><b>${t.cat}:</b> ${escapeHtml(t.text)}</div>`
             ).join('');
 
-            // [Финальная фаза] Открытие последней скрытой характеристики — прямо в своей карточке на столе
             let finalRevealHtml = '';
             if (room.current_phase === 'awaiting_verdict' && isMe && !isEliminated) {
                 const hidden = (state.myCardCache || []).filter(c => !c.revealed);
@@ -1300,13 +1334,13 @@ async function updateGameDynamic() {
 
     const scenPanel = document.getElementById('scenarioPanelGame');
     if (scenPanel) scenPanel.style.display = room.scenario_visible ? 'block' : 'none';
+
     refreshBunkerList();
     refreshEventsFeed();
     refreshGameChat();
     syncGamePhaseTimerTicker();
 }
 
-// ---------- Чат в игре: общий + личные каналы ----------
 function switchGameChatRecipient() {
     const sel = document.getElementById('gameChatRecipient');
     state.gameChatRecipient = sel ? (sel.value || null) : null;
@@ -1316,10 +1350,12 @@ function switchGameChatRecipient() {
 async function refreshGameChat() {
     const el = document.getElementById('gameChatMessages');
     if (!el) return;
+
     const recipientId = state.gameChatRecipient;
     const msgs = recipientId
         ? await dbFetchPrivateChat(state.currentRoomCode, state.playerId, recipientId)
         : await dbFetchChat(state.currentRoomCode);
+
     const nameOf = id => (state.players.find(p => p.id === id) || {}).name || 'Бывший игрок';
     el.innerHTML = msgs.map(m => `<div class="chat-message"><span class="sender">${escapeHtml(nameOf(m.sender_id))}:</span> ${escapeHtml(m.text)}</div>`).join('');
     el.scrollTop = el.scrollHeight;
@@ -1330,9 +1366,11 @@ async function actionSendGameChat() {
     if (!input) return;
     const text = input.value.trim();
     if (!text) return;
+
     const me = state.players.find(p => p.id === state.playerId);
     if (me && me.is_muted) return alert('Вы в муте, писать нельзя.');
     if (me && me.timeout_until && new Date(me.timeout_until) > new Date()) return alert('Вы в таймауте.');
+
     input.value = '';
     if (state.gameChatRecipient) {
         await dbSendPrivateChat(state.currentRoomCode, state.playerId, state.gameChatRecipient, text);
@@ -1341,6 +1379,7 @@ async function actionSendGameChat() {
     }
     refreshGameChat();
 }
+
 function handleGameChatKey(e) { if (e.key === 'Enter') actionSendGameChat(); }
 
 function eventIcon(type) {
@@ -1350,26 +1389,28 @@ function eventIcon(type) {
 async function refreshEventsFeed() {
     const el = document.getElementById('eventsFeed');
     if (!el) return;
+
     const room = state.room;
     const isHost = room && room.host_id === state.playerId;
     const events = await dbFetchEvents(state.currentRoomCode);
-    // [Шаг 6, п.2.1] Личное сообщение ведущего конкретному игроку видят только он сам и ведущий.
+
     const visible = events.filter(e => !e.private || isHost || e.target_id === state.playerId);
     if (visible.length === 0) { el.innerHTML = '<li class="muted-note">Пока ничего не произошло.</li>'; return; }
+
     el.innerHTML = visible.map(e => {
         const targetName = e.target_id ? (state.players.find(p => p.id === e.target_id) || {}).name : null;
-        return `<li>${eventIcon(e.type)} ${escapeHtml(e.text)}${targetName ? ` <span class="muted-note">(${escapeHtml(targetName)})</span>` : ''}${e.private ? ' <span class="muted-note">🔒 лично</span>' : ''}</li>`;
+        return `<li>${eventIcon(e.type)} ${escapeHtml(e.text)}${targetName ? `<span class="muted-note">(${escapeHtml(targetName)})</span>` : ''}${e.private ? '<span class="muted-note">🔒 лично</span>' : ''}</li>`;
     }).join('');
 }
 
-// ---------- Действия ведущего: события ----------
 async function actionSendEvent() {
     const textEl = document.getElementById('eventText');
     const text = textEl.value.trim();
     if (!text) return alert('Введите текст события.');
+
     const type = document.getElementById('eventType').value;
     const targetId = document.getElementById('eventTarget').value || null;
-    // Сообщение конкретному игроку считается личным и не видно остальным.
+
     await dbInsertEvent(state.currentRoomCode, state.room.current_round, type, text, targetId, !!targetId);
     textEl.value = '';
     refreshEventsFeed();
@@ -1378,11 +1419,13 @@ async function actionSendEvent() {
 async function actionQuickEvent(kind) {
     const room = state.room;
     const alivePlayers = state.players.filter(p => p.id !== room.host_id);
+
     if (kind === 'find') {
         const revealed = room.revealed_bonus_ids || [];
         const active = room.active_bonus_ids || [];
         const remaining = active.filter(id => !revealed.includes(id));
         if (remaining.length === 0) return alert('Все доступные бонусные свойства бункера уже открыты.');
+
         const pick = remaining[Math.floor(Math.random() * remaining.length)];
         await dbUpdateRoom(state.currentRoomCode, { revealed_bonus_ids: [...revealed, pick] });
         await dbInsertEvent(state.currentRoomCode, room.current_round, 'positive',
@@ -1393,7 +1436,6 @@ async function actionQuickEvent(kind) {
         if (alivePlayers.length === 0) return;
         const victim = alivePlayers[Math.floor(Math.random() * alivePlayers.length)];
         await dbTimeoutPlayer(state.currentRoomCode, victim.id, state.playerId, 60);
-        // Публичное событие (все должны понимать, почему этот игрок временно не пишет в чат).
         await dbInsertEvent(state.currentRoomCode, room.current_round, 'negative',
             victim.name + ' получил(а) лёгкую травму при ЧП в бункере и не может писать в чат следующую минуту.', victim.id, false);
     }
@@ -1404,23 +1446,26 @@ async function actionToggleScenarioVisible() {
     await dbUpdateRoom(state.currentRoomCode, { scenario_visible: !state.room.scenario_visible });
 }
 
-// [Шаг 6] Сколько характеристик и какого типа можно открыть в текущем раунде
 function canRevealCategory(card, room, category) {
     const roundIdx = (room.current_round || 1) - 1;
     const slots = (room.settings?.round_reveals || [])[roundIdx] || ['any'];
     const limit = slots.length;
+
     const usedThisRound = card.filter(c => c.round_revealed === room.current_round).length;
     if (usedThisRound >= limit) return { ok: false, reason: 'Лимит открытий на этот раунд исчерпан (' + limit + ').' };
 
     const alreadyRevealedCats = new Set(card.filter(c => c.revealed).map(c => c.category));
     const specificSlotCats = slots.filter(s => s !== 'any');
     const pendingRequired = specificSlotCats.filter(s => !alreadyRevealedCats.has(s));
+
     if (pendingRequired.includes(category)) return { ok: true };
 
     const thisRoundCards = card.filter(c => c.round_revealed === room.current_round);
     const usedAnyThisRound = thisRoundCards.filter(c => !specificSlotCats.includes(c.category)).length;
     const anySlotsTotal = slots.filter(s => s === 'any').length;
+
     if (usedAnyThisRound < anySlotsTotal) return { ok: true };
+
     return { ok: false, reason: 'В этом раунде такой тип характеристики недоступен.' };
 }
 
@@ -1437,14 +1482,15 @@ async function loadMyCard() {
 
     const room = state.room;
     const note = await dbFetchNote(state.currentRoomCode, state.playerId);
+
     const revealOrder = state.players.filter(p => p.id !== room.host_id);
     const isMyRevealTurn = room.current_phase === 'reveal' && (revealOrder[room.reveal_index || 0] || {}).id === state.playerId;
     const amEliminated = (state.players.find(p => p.id === state.playerId) || {}).is_alive === false;
 
-    // [Шаг 6, п.1.2] Свой текст видно всегда; числовую "ценность" характеристики игрок не видит никогда.
     const itemsHtml = card.map(c => {
         const isSpecial = c.category === 'special_condition';
         let liClass = '', extra = '';
+
         if (!c.revealed) {
             if (amEliminated) {
                 extra = '<div class="muted-note" style="font-size:11px; margin-top:3px;">(вы выбыли — открытие недоступно)</div>';
@@ -1459,28 +1505,29 @@ async function loadMyCard() {
                     : `<div class="muted-note" style="font-size:11px; margin-top:3px;">${escapeHtml(check.reason)}</div>`;
             }
         } else if (isSpecial && !c.used) {
-            liClass = ' special-unused';
+            liClass = 'special-unused';
             if (amEliminated) {
                 extra = '<div class="muted-note" style="font-size:11px; margin-top:3px;">(вы выбыли — использование недоступно)</div>';
             } else {
-            const others = state.players.filter(p => p.id !== state.playerId && p.id !== room.host_id);
-            extra = `<div style="margin-top:6px;">
-                    <button class="btn btn-sm btn-primary" onclick="toggleTargetPicker('${c.id}')">Использовать</button>
-                    <div id="targetPicker_${c.id}" style="display:none; margin-top:6px;">
-                        ${others.length ? others.map(p =>
-                            `<label class="muted-note" style="display:block;"><input type="checkbox" value="${p.id}" style="width:auto; display:inline-block; margin-right:4px;">${escapeHtml(p.name)}</label>`
-                        ).join('') : '<span class="muted-note">Нет других игроков для выбора цели.</span>'}
-                        <button class="btn btn-sm btn-danger" style="margin-top:4px;" onclick="actionUseSpecialCondition('${c.id}')">Подтвердить использование</button>
-                    </div>
-                </div>`;
+                const others = state.players.filter(p => p.id !== state.playerId && p.id !== room.host_id);
+                extra = `<div style="margin-top:6px;">
+                        <button class="btn btn-sm btn-primary" onclick="toggleTargetPicker('${c.id}')">Использовать</button>
+                        <div id="targetPicker_${c.id}" style="display:none; margin-top:6px;">
+                            ${others.length ? others.map(p =>
+                                `<label class="muted-note" style="display:block;"><input type="checkbox" value="${p.id}" style="width:auto; display:inline-block; margin-right:4px;">${escapeHtml(p.name)}</label>`
+                            ).join('') : '<span class="muted-note">Нет других игроков для выбора цели.</span>'}
+                            <button class="btn btn-sm btn-danger" style="margin-top:4px;" onclick="actionUseSpecialCondition('${c.id}')">Подтвердить использование</button>
+                        </div>
+                    </div>`;
             }
         } else if (isSpecial && c.used) {
-            liClass = ' special-used';
+            liClass = 'special-used';
             const targetNames = (c.used_targets || []).map(id => (state.players.find(p => p.id === id) || {}).name).filter(Boolean);
             extra = `<span class="muted-note">(использовано${targetNames.length ? ' · цель: ' + escapeHtml(targetNames.join(', ')) : ''})</span>`;
         } else {
             extra = c.revealed ? '<span class="muted-note">(открыто остальным)</span>' : '';
         }
+
         return `<li class="${liClass}"><span class="prop-tag">${escapeHtml(CATEGORY_LABELS[c.category] || c.category)}</span>${escapeHtml(c.text)} ${extra}</li>`;
     }).join('');
 
@@ -1490,12 +1537,10 @@ async function loadMyCard() {
     el.innerHTML = `
         <h2>Моя карточка</h2>
         <ul class="prop-list">${itemsHtml}</ul>
-
         <h3 style="margin-top:14px;">Личные заметки</h3>
         <p class="muted-note">Видны только вам, ведущий их не видит.</p>
         <textarea id="myNotes" rows="3" style="width:100%; padding:10px; background:var(--void); border:1px solid #4a4e28; color:var(--paper); border-radius:4px; font-family:inherit;">${escapeHtml(note?.text || '')}</textarea>
         <button class="btn btn-ghost btn-sm" style="margin-top:6px;" onclick="actionSaveNote(this)">Сохранить заметку</button>
-
         ${historyHtml ? `<h3 style="margin-top:14px;">История ваших действий</h3><ul class="prop-list">${historyHtml}</ul>` : ''}
     `;
 }
@@ -1508,14 +1553,18 @@ function toggleTargetPicker(cardId) {
 async function actionUseSpecialCondition(cardId) {
     const picker = document.getElementById('targetPicker_' + cardId);
     const targets = picker ? Array.from(picker.querySelectorAll('input[type=checkbox]:checked')).map(cb => cb.value) : [];
+
     const card = (state.myCardCache || []).find(c => String(c.id) === String(cardId));
     const { error } = await supabaseClient.from('player_cards').update({ used: true, used_targets: targets }).eq('id', cardId);
     if (error) { console.error('Ошибка использования спецусловия:', error); return alert('Не удалось использовать спецусловие: ' + error.message); }
+
     const myName = (state.players.find(p => p.id === state.playerId) || {}).name || state.playerName;
     const targetNames = targets.map(id => (state.players.find(p => p.id === id) || {}).name).filter(Boolean);
+
     await dbInsertEvent(state.currentRoomCode, state.room.current_round, 'neutral',
         myName + ' использовал(а) спецусловие: ' + (card ? card.text : '') + (targetNames.length ? ' (цель: ' + targetNames.join(', ') + ')' : ''),
         targets[0] || null, false);
+
     loadMyCard();
     refreshEventsFeed();
 }
@@ -1542,6 +1591,7 @@ async function actionRevealTrait(cardId) {
         const target = card.find(c => String(c.id) === String(cardId));
         if (!target) return alert('Характеристика не найдена, попробуйте обновить страницу.');
         if (target.revealed) return;
+
         const { error } = await supabaseClient.from('player_cards').update({ revealed: true, round_revealed: room.current_round }).eq('id', cardId);
         if (error) { console.error('Ошибка открытия характеристики:', error); return alert('Не удалось открыть характеристику: ' + error.message); }
         loadMyCard();
@@ -1550,16 +1600,21 @@ async function actionRevealTrait(cardId) {
     }
 
     if (room.current_phase !== 'reveal') return alert('Открытие характеристик доступно только в фазе «Открытие раунда».');
+
     const revealOrder = state.players.filter(p => p.id !== room.host_id);
     const active = revealOrder[room.reveal_index || 0];
     if (!active || active.id !== state.playerId) return alert('Сейчас не ваш ход.');
+
     const card = state.myCardCache || [];
     const target = card.find(c => String(c.id) === String(cardId));
     if (!target) return alert('Характеристика не найдена, попробуйте обновить страницу.');
+
     const check = canRevealCategory(card, room, target.category);
     if (!check.ok) return alert(check.reason);
+
     const { error } = await supabaseClient.from('player_cards').update({ revealed: true, round_revealed: room.current_round }).eq('id', cardId);
     if (error) { console.error('Ошибка открытия характеристики:', error); return alert('Не удалось открыть характеристику: ' + error.message); }
+
     loadMyCard();
     updateGameDynamic();
 }
@@ -1567,6 +1622,7 @@ async function actionRevealTrait(cardId) {
 async function loadScenarioPanelGame() {
     const room = state.room;
     if (!room.scenario_id) return;
+
     if (!state.gameScenario || state.gameScenario.scenario?.id !== room.scenario_id) {
         state.gameScenario = await dbFetchScenarioDetail(room.scenario_id);
     }
@@ -1577,9 +1633,11 @@ async function loadScenarioPanelGame() {
 function renderScenarioPanelGameContent() {
     const el = document.getElementById('scenarioPanelGame');
     if (!el || !state.gameScenario || !state.gameScenario.scenario) return;
+
     const { scenario, base, bonus } = state.gameScenario;
     const revealedIds = state.room.revealed_bonus_ids || [];
     const revealedBonus = (bonus || []).filter(b => revealedIds.includes(b.id));
+
     el.innerHTML = `
         <h3>${escapeHtml(scenario.title)}</h3>
         <p>${escapeHtml(scenario.catastrophe_description)}</p>
@@ -1595,15 +1653,16 @@ function renderScenarioPanelGameContent() {
 function refreshBunkerList() {
     const bunkerEl = document.getElementById('bunkerRevealedList');
     if (!bunkerEl) return;
+
     const revealedIds = state.room.revealed_bonus_ids || [];
     const bonus = state.gameScenario?.bonus || [];
     const revealedItems = bonus.filter(b => revealedIds.includes(b.id));
+
     bunkerEl.innerHTML = revealedItems.length
         ? revealedItems.map(b => `<li class="bonus"><span class="prop-tag">Бонус</span>${escapeHtml(b.text)}</li>`).join('')
         : '<li class="muted-note" style="list-style:none;">Пока ничего не открыто.</li>';
 }
 
-// ---------- Управление таймером фазы ----------
 async function hostStartTimer() {
     const seconds = phaseDuration(state.room.current_phase);
     if (seconds <= 0) return;
@@ -1629,10 +1688,10 @@ async function hostStopTimer() {
     await dbUpdateRoom(state.currentRoomCode, { phase_running: false, phase_ends_at: null, phase_paused_remaining: null });
 }
 
-// ---------- Переход между фазами ----------
 async function resolveVoting() {
     const room = state.room;
     const nominees = room.nominees || [];
+
     const { data: votes, error } = await supabaseClient.from('votes')
         .select('*').eq('room_code', state.currentRoomCode).eq('round', room.current_round);
     if (error) { console.error(error); return; }
@@ -1655,11 +1714,11 @@ async function resolveVoting() {
     }
 
     if (topCandidates.length > 1) {
-        // Ничья: повторяем оправдательную речь и голосование среди тех, кто набрал максимум (правило из Возможностей, п.3.5)
         const names = topCandidates.map(id => (state.players.find(p => p.id === id) || {}).name || '?').join(', ');
         await supabaseClient.from('votes').delete().eq('room_code', state.currentRoomCode).eq('round', room.current_round);
         await dbInsertEvent(state.currentRoomCode, room.current_round, 'neutral',
             'Ничья при голосовании (' + names + ') — повторная оправдательная речь и голосование среди них.', null, false);
+
         const seconds = phaseDuration('defense');
         const ends = seconds > 0 ? new Date(Date.now() + seconds * 1000).toISOString() : null;
         await dbUpdateRoom(state.currentRoomCode, {
@@ -1671,10 +1730,12 @@ async function resolveVoting() {
 
     const eliminatedId = topCandidates[0];
     const eliminatedP = state.players.find(p => p.id === eliminatedId);
+
     await supabaseClient.from('players').update({ is_alive: false }).eq('id', eliminatedId);
     await dbInsertEvent(state.currentRoomCode, room.current_round, 'negative',
         (eliminatedP ? eliminatedP.name : 'Игрок') + ' исключён(а) по итогам голосования (' + maxVotes + ' голос(ов) из ' + (votes || []).length + ').',
         eliminatedId, false);
+
     await dbUpdateRoom(state.currentRoomCode, {
         current_phase: 'vote_result', phase_ends_at: null, phase_running: false, phase_paused_remaining: null, last_eliminated_id: eliminatedId
     });
@@ -1725,6 +1786,7 @@ async function hostAdvancePhase() {
 
     const idx = PHASE_SEQUENCE.indexOf(phase);
     let nextPhase, nextRound = round, nextNominees = nominees, nextNominations = room.nominations || {};
+
     if (idx === -1 || idx === PHASE_SEQUENCE.length - 1) {
         const totalRounds = room.settings?.rounds || 1;
         if (round >= totalRounds) {
@@ -1743,6 +1805,7 @@ async function hostAdvancePhase() {
 
     const seconds = phaseDuration(nextPhase);
     const ends = seconds > 0 ? new Date(Date.now() + seconds * 1000).toISOString() : null;
+
     await dbUpdateRoom(state.currentRoomCode, {
         current_phase: nextPhase, current_round: nextRound, nominees: nextNominees, nominations: nextNominations,
         last_eliminated_id: null,
@@ -1750,34 +1813,29 @@ async function hostAdvancePhase() {
     });
 }
 
-// ---------- Выставление кандидатов ----------
-// [ИСПРАВЛЕНО 5] Добавлена жесткая проверка на ведущего
 async function actionNominate(targetId) {
     const room = state.room;
-    
-    // ЖЕСТКАЯ ЗАЩИТА: Ведущий не игрок
-    if (state.playerId === room.host_id) {
-        return alert('Ведущий не может участвовать в голосованиях и выставлениях.');
-    }
+    if (state.playerId === room.host_id) return alert('Ведущий не может участвовать в голосованиях и выставлениях.');
+
     const me = state.players.find(p => p.id === state.playerId);
     if (me && me.is_alive === false) return alert('Вы выбыли из игры и не можете выставлять.');
-
     if (room.current_phase !== 'nomination') return;
     if (targetId === state.playerId) return alert('Нельзя выставить самого себя.');
     if (targetId === room.host_id) return alert('Нельзя выставить ведущего.');
-    
+
     const nominations = { ...(room.nominations || {}) };
     if (nominations[state.playerId]) return alert('Вы уже выставили игрока в этом раунде — изменить нельзя.');
-    
+
     nominations[state.playerId] = targetId;
     const nominees = [...new Set(Object.values(nominations))];
+
     await dbUpdateRoom(state.currentRoomCode, { nominations, nominees });
 }
 
-// ---------- Голосование (слепое, один голос на игрока за раунд, изменить нельзя) ----------
 async function actionCastVote(targetId) {
     const room = state.room;
     if (state.playerId === room.host_id) return alert('Ведущий не голосует.');
+
     const me = state.players.find(p => p.id === state.playerId);
     if (me && me.is_alive === false) return alert('Вы выбыли из игры и не можете голосовать.');
     if (room.current_phase !== 'voting') return;
@@ -1788,6 +1846,7 @@ async function actionCastVote(targetId) {
     const { error } = await supabaseClient.from('votes').insert({
         room_code: state.currentRoomCode, round: room.current_round, voter_id: state.playerId, target_id: targetId
     });
+
     if (error) {
         if (error.code === '23505') {
             state.myVoteThisRound = targetId;
@@ -1797,6 +1856,7 @@ async function actionCastVote(targetId) {
         console.error(error);
         return;
     }
+
     state.myVoteThisRound = targetId;
     updateGameDynamic();
 }
@@ -1821,8 +1881,6 @@ async function loadVoteProgress() {
     el.textContent = `Проголосовало: ${count} из ${total}`;
 }
 
-// ---------- Финальный вердикт ----------
-// ---------- Финальная фаза: разрешение на последний реveal + скрытый инструмент вердикта ----------
 async function actionToggleFinalReveal() {
     await dbUpdateRoom(state.currentRoomCode, { final_reveal_unlocked: !state.room.final_reveal_unlocked });
 }
@@ -1834,12 +1892,15 @@ async function actionSetVerdictChoice(choice) {
 async function actionAnnounceVerdict() {
     const room = state.room;
     if (!room.verdict) return alert('Сначала выберите «Победа» или «Поражение».');
+
     const percentInput = document.getElementById('verdictPercent');
     const percent = percentInput && percentInput.value !== '' ? Math.max(0, Math.min(100, parseInt(percentInput.value) || 0)) : null;
+
     await dbUpdateRoom(state.currentRoomCode, {
         current_phase: 'finished', phase_ends_at: null, phase_running: false, phase_paused_remaining: null,
         verdict_percent: percent
     });
+
     const survivors = state.players.filter(p => p.id !== room.host_id && p.is_alive !== false).map(p => p.name).join(', ');
     await dbInsertEvent(state.currentRoomCode, room.current_round,
         room.verdict === 'victory' ? 'positive' : 'negative',
@@ -1847,13 +1908,14 @@ async function actionAnnounceVerdict() {
         null, false);
 }
 
-// ---------- Открытие случайного доп. свойства бункера ----------
 async function actionRevealBonus() {
     const room = state.room;
     const active = room.active_bonus_ids || [];
     const revealed = room.revealed_bonus_ids || [];
     const remaining = active.filter(id => !revealed.includes(id));
+
     if (remaining.length === 0) return alert('Все дополнительные свойства этой партии уже открыты.');
+
     const pick = remaining[Math.floor(Math.random() * remaining.length)];
     await dbUpdateRoom(state.currentRoomCode, { revealed_bonus_ids: [...revealed, pick] });
 }
@@ -1864,6 +1926,7 @@ async function actionResetToLobby() {
     await dbClearEvents(state.currentRoomCode);
     await dbClearVotes(state.currentRoomCode);
     await supabaseClient.from('players').update({ is_alive: true }).eq('room_code', state.currentRoomCode);
+
     await dbUpdateRoom(state.currentRoomCode, {
         phase: 'lobby', countdown_ends_at: null, current_round: 1, current_phase: 'reveal',
         phase_ends_at: null, phase_running: false, phase_paused_remaining: null,
@@ -1871,6 +1934,7 @@ async function actionResetToLobby() {
         active_bonus_ids: [], revealed_bonus_ids: [], scenario_visible: false, last_eliminated_id: null,
         final_reveal_unlocked: false, verdict: null, verdict_percent: null
     });
+
     state.lastRenderedView = null;
     state.lastGameRenderKey = null;
     state.gameScenario = null;
@@ -1883,6 +1947,7 @@ async function actionCreateRoom() {
     const name = document.getElementById('hostName').value.trim();
     if (!name) return alert('Введите ваше имя!');
     if (!dbConnected) return alert('База данных не подключена!');
+
     try {
         const code = await dbCreateRoom(name);
         state.playerName = name; localStorage.setItem('playerName', name);
@@ -1899,6 +1964,7 @@ async function actionJoinRoom() {
     const name = document.getElementById('joinName').value.trim();
     if (!code || !name) return alert('Заполните оба поля!');
     if (!dbConnected) return alert('База данных не подключена!');
+
     try {
         await dbJoinRoom(code, name);
         state.playerName = name; localStorage.setItem('playerName', name);
@@ -1915,10 +1981,12 @@ async function actionLeaveRoom() {
     stopPolling();
     const code = state.currentRoomCode;
     const isHost = state.room && state.room.host_id === state.playerId;
+
     try {
         if (isHost) await supabaseClient.from('rooms').delete().eq('code', code);
         else await supabaseClient.from('players').delete().eq('id', state.playerId).eq('room_code', code);
     } catch (e) { console.error(e); }
+
     saveRoomCode(null);
     state.room = null; state.players = []; state.lastRenderedView = null;
     renderHome();
@@ -1934,8 +2002,10 @@ async function actionToggleReady() {
 async function actionStartGame() {
     const min = state.room.settings?.min_players || 1;
     if (state.players.length < min) return alert('Недостаточно игроков для старта (минимум ' + min + ').');
+
     const notReady = state.players.find(p => !p.is_ready);
     if (notReady) return alert(notReady.name + ' ещё не готов(а).');
+
     const ends = new Date(Date.now() + 10000).toISOString();
     await dbUpdateRoom(state.currentRoomCode, { phase: 'starting', countdown_ends_at: ends });
 }
@@ -1943,6 +2013,7 @@ async function actionStartGame() {
 async function actionSaveSettings() {
     const rounds = parseInt(document.getElementById('setRounds').value) || 1;
     const roundReveals = [];
+
     for (let i = 0; i < rounds; i++) {
         const countEl = document.getElementById('roundCount_' + i);
         const count = countEl ? Math.max(1, parseInt(countEl.value) || 1) : 1;
@@ -1953,6 +2024,7 @@ async function actionSaveSettings() {
         }
         roundReveals.push(slots);
     }
+
     const settings = {
         min_players: parseInt(document.getElementById('setMin').value) || 1,
         max_players: parseInt(document.getElementById('setMax').value) || 20,
@@ -1967,6 +2039,7 @@ async function actionSaveSettings() {
         },
         private_chat_enabled: document.getElementById('setPrivateChat').checked
     };
+
     await dbUpdateRoom(state.currentRoomCode, { settings });
     alert('Настройки сохранены');
 }
@@ -1991,9 +2064,11 @@ async function actionSendChat() {
     const input = document.getElementById('chatInput');
     const text = input.value.trim();
     if (!text) return;
+
     const me = state.players.find(p => p.id === state.playerId);
     if (me && me.is_muted) return alert('Вы в муте, писать нельзя.');
     if (me && me.timeout_until && new Date(me.timeout_until) > new Date()) return alert('Вы в таймауте.');
+
     input.value = '';
     await dbSendChat(state.currentRoomCode, text);
     state.chat = await dbFetchChat(state.currentRoomCode);
