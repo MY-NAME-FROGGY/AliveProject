@@ -39,7 +39,7 @@ const CATEGORY_LABELS = {
 // 'goal' НЕ добавляем сюда, так как в character_pool нет записей с категорией goal.
 const CATEGORY_LIST = Object.keys(CATEGORY_LABELS).filter(k => k !== 'goal');
 
-const AVATAR_OPTIONS = ['🧑‍🚀','🧑‍⚕️','🧑‍🌾','🧑‍🍳','🧑‍🔬','🧑‍🎨','🧑‍🏫','🧑‍💻','🧑‍🚒','🧑‍✈️','🥷','🧟','🧛','🧙','🦸','🐺','🦊','🐻','🐱','🐧'];
+const AVATAR_OPTIONS = Array.from({length: 20}, (_, i) => `/avatars/meme${i+1}.png`);
 const COLOR_OPTIONS = ['#e9e3d0','#d3a026','#a63d2f','#5b6b48','#5b8a4a','#9b7fd4','#4a90a4','#c97b3d','#7a5c1e','#b04a6a'];
 
 const PHASE_SEQUENCE = ['reveal', 'discussion', 'nomination', 'defense', 'voting', 'vote_result', 'bunker_reveal'];
