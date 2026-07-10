@@ -279,14 +279,46 @@ async function dbFetchScenarios() {
     return data || [];
 }
 
+// ВАЖНО: здесь намеренно перечислены только "публичные" колонки.
+// В базе у scenarios/bunker_properties есть ещё host_notes/host_note —
+// это подсказки ТОЛЬКО для ведущего, и эта функция их не запрашивает,
+// потому что её результат уходит в общий предпросмотр и в игровой экран,
+// которые видят все игроки. Подсказки ведущего грузятся отдельно, через
+// dbFetchHostNotes() — см. ниже.
 async function dbFetchScenarioDetail(id) {
-    const { data: scenario } = await supabaseClient.from('scenarios').select('').eq('id', id).maybeSingle();
-    const { data: props } = await supabaseClient.from('bunker_properties').select('').eq('scenario_id', id);
+    const { data: scenario } = await supabaseClient.from('scenarios').select('id,title,catastrophe_description,has_presets').eq('id', id).maybeSingle();
+    const { data: props } = await supabaseClient.from('bunker_properties').select('id,scenario_id,type,text').eq('scenario_id', id);
     return {
         scenario,
         base: (props || []).filter(p => p.type === 'base'),
         bonus: (props || []).filter(p => p.type === 'bonus')
     };
+}
+
+// Заметки ТОЛЬКО ДЛЯ ВЕДУЩЕГО: как карты бункера взаимодействуют с
+// профессиями/фактами игроков + победные/проигрышные комбинации сценария.
+// Идёт через RPC-функцию get_host_notes (см. SQL), которая на стороне
+// базы данных сама проверяет, что запрашивающий playerId — это
+// действительно host_id этой комнаты, и только тогда отдаёт текст.
+// Никогда не вызывать эту функцию из экрана/компонента, который видят
+// обычные игроки.
+async function dbFetchHostNotes(scenarioId) {
+    if (!state.room || state.room.host_id !== state.playerId || !state.currentRoomCode) {
+        return { properties: {}, scenarioNotes: '' };
+    }
+    const { data, error } = await supabaseClient.rpc('get_host_notes', {
+        p_scenario_id: scenarioId,
+        p_room_code: state.currentRoomCode,
+        p_player_id: state.playerId
+    });
+    if (error) { console.error('Ошибка загрузки заметок ведущего:', error); return { properties: {}, scenarioNotes: '' }; }
+    const properties = {};
+    let scenarioNotes = '';
+    (data || []).forEach(row => {
+        if (row.host_note) properties[row.bunker_property_id] = row.host_note;
+        if (row.scenario_host_notes) scenarioNotes = row.scenario_host_notes;
+    });
+    return { properties, scenarioNotes };
 }
 
 async function dbFetchPresetsForScenario(scenarioId) {
@@ -942,6 +974,7 @@ async function openScenarioDetail(id) {
     state.view = 'scenarioDetail';
     state.viewingScenario = await dbFetchScenarioDetail(id);
     state.viewingPresets = await dbFetchPresetsForScenario(id);
+    state.viewingHostNotes = await dbFetchHostNotes(id);
     renderScenarioDetail();
 }
 
@@ -949,6 +982,11 @@ function renderScenarioDetail() {
     const { scenario, base, bonus } = state.viewingScenario;
     const presets = state.viewingPresets || [];
     const isHost = state.room && state.room.host_id === state.playerId;
+    // Этот экран и так открывается только ведущему (см. проверку в
+    // openScenarioDetail выше), так что здесь можно спокойно показать
+    // hostNotes — обычный игрок сюда попасть не может.
+    const hostNotes = state.viewingHostNotes || { properties: {}, scenarioNotes: '' };
+    const notedBonus = bonus.filter(p => hostNotes.properties[p.id]);
 
     document.getElementById('app').innerHTML = `
         <h1>ОСТАТЬСЯ <span>В ЖИВЫХ</span></h1>
@@ -964,6 +1002,14 @@ function renderScenarioDetail() {
             <h3>Дополнительные свойства (в игре выпадет 2–4 из ${bonus.length})</h3>
             <ul class="prop-list">${bonus.map(p => `<li class="bonus"><span class="prop-tag">Бонус</span>${escapeHtml(p.text)}</li>`).join('')}</ul>
         </div>
+        ${isHost && (notedBonus.length || hostNotes.scenarioNotes) ? `
+        <div class="panel" style="border:1px dashed #9b7fd4;">
+            <h3>🔒 Только для ведущего</h3>
+            <p class="muted-note">Игроки этот блок никогда не видят.</p>
+            ${notedBonus.length ? `<ul class="prop-list">${notedBonus.map(p => `<li>${escapeHtml(hostNotes.properties[p.id])}</li>`).join('')}</ul>` : ''}
+            ${hostNotes.scenarioNotes ? `<h4 style="margin-top:10px;">Победные / проигрышные комбинации</h4><p class="muted-note" style="white-space:pre-line;">${escapeHtml(hostNotes.scenarioNotes)}</p>` : ''}
+        </div>
+        ` : ''}
         ${presets.length > 0 ? `
             <div class="panel">
                 <h3>Готовые карточки персонажей (${presets.length} шт.)</h3>
@@ -1213,6 +1259,9 @@ function renderHostToolsPanel(room) {
         <div class="panel" id="hostToolsPanel">
             <h2>Панель ведущего</h2>
             <p class="muted-note">Личной карточки у ведущего нет — вместо неё инструменты, которые влияют на ход игры.</p>
+
+            <div id="hostNotesPanel"></div>
+
             <h3 style="margin-top:14px;">Составить событие</h3>
             <div class="settings-grid">
                 <div class="settings-field">
@@ -1628,8 +1677,41 @@ async function loadScenarioPanelGame() {
     if (!state.gameScenario || state.gameScenario.scenario?.id !== room.scenario_id) {
         state.gameScenario = await dbFetchScenarioDetail(room.scenario_id);
     }
+
+    const isHost = room.host_id === state.playerId;
+    if (isHost && (!state.gameHostNotes || state.gameHostNotesFor !== room.scenario_id)) {
+        state.gameHostNotes = await dbFetchHostNotes(room.scenario_id);
+        state.gameHostNotesFor = room.scenario_id;
+    }
+
     renderScenarioPanelGameContent();
     refreshBunkerList();
+    if (isHost) refreshHostNotesPanel();
+}
+
+// Рендерит блок "только для ведущего" внутри панели ведущего (см.
+// renderHostToolsPanel). Ничего не делает для обычных игроков — контейнер
+// #hostNotesPanel вообще не существует в их разметке.
+function refreshHostNotesPanel() {
+    const el = document.getElementById('hostNotesPanel');
+    if (!el) return;
+    const room = state.room;
+    if (!room || room.host_id !== state.playerId) { el.innerHTML = ''; return; }
+
+    const hostNotes = state.gameHostNotes || { properties: {}, scenarioNotes: '' };
+    const bonus = state.gameScenario?.bonus || [];
+    const notedBonus = bonus.filter(p => hostNotes.properties[p.id]);
+
+    if (!notedBonus.length && !hostNotes.scenarioNotes) { el.innerHTML = ''; return; }
+
+    el.innerHTML = `
+        <div class="panel" style="border:1px dashed #9b7fd4;">
+            <h3>🔒 Только для ведущего</h3>
+            <p class="muted-note">Игроки этот блок никогда не видят.</p>
+            ${notedBonus.length ? `<ul class="prop-list">${notedBonus.map(p => `<li>${escapeHtml(p.text)}<br><span class="muted-note">${escapeHtml(hostNotes.properties[p.id])}</span></li>`).join('')}</ul>` : ''}
+            ${hostNotes.scenarioNotes ? `<h4 style="margin-top:10px;">Победные / проигрышные комбинации</h4><p class="muted-note" style="white-space:pre-line;">${escapeHtml(hostNotes.scenarioNotes)}</p>` : ''}
+        </div>
+    `;
 }
 
 function renderScenarioPanelGameContent() {
