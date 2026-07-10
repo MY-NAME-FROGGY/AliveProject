@@ -252,7 +252,12 @@ function renderCustomizationPicker() {
 }
 
 function avatarChip(p) {
-    return `<div class="ptable-avatar" style="border-color:${p.outline_color || '#4a4e28'};">${p.avatar || ''}</div>`;
+    const src = p.avatar || '';
+    const isImg = src.startsWith('/avatars/') || src.startsWith('http');
+    const content = isImg 
+        ? `<img src="${src}" alt="" style="width:100%; height:100%; object-fit:cover; border-radius:50%;">`
+        : src;
+    return `<div class="ptable-avatar" style="border-color:${p.outline_color || '#4a4e28'};">${content}</div>`;
 }
 
 function nameColorStyle(p) {
