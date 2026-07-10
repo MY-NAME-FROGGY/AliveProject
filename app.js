@@ -39,7 +39,7 @@ const CATEGORY_LABELS = {
 // 'goal' НЕ добавляем сюда, так как в character_pool нет записей с категорией goal.
 const CATEGORY_LIST = Object.keys(CATEGORY_LABELS).filter(k => k !== 'goal');
 
-const AVATAR_OPTIONS = Array.from({length: 20}, (_, i) => `/avatars/meme${i+1}.png`);
+const AVATAR_OPTIONS = ['🧑‍🚀','🧑‍⚕️','🧑‍🌾','🧑‍🍳','🧑‍🔬','🧑‍🎨','🧑‍🏫','🧑‍💻','🧑‍🚒','🧑‍✈️','🥷','🧟','🧛','🧙','🦸','🐺','🦊','🐻','🐱','🐧'];
 const COLOR_OPTIONS = ['#e9e3d0','#d3a026','#a63d2f','#5b6b48','#5b8a4a','#9b7fd4','#4a90a4','#c97b3d','#7a5c1e','#b04a6a'];
 
 const PHASE_SEQUENCE = ['reveal', 'discussion', 'nomination', 'defense', 'voting', 'vote_result', 'bunker_reveal'];
@@ -233,11 +233,9 @@ async function actionSetOutlineColor(c) { await dbSetCustomization(state.current
 
 function renderCustomizationPicker() {
     const me = state.players.find(p => p.id === state.playerId) || {};
- const avatarsHtml = AVATAR_OPTIONS.map(a =>
-`<button class="btn btn-sm ${me.avatar === a ? 'btn-primary' : 'btn-ghost'}" onclick="actionSetAvatar('${a}')" style="padding:4px; width:72px; height:72px; overflow:hidden;">
-    <img src="${a}" alt="avatar" style="width:100%; height:100%; object-fit:cover; border-radius:4px; display:block;">
-</button>`
-).join('');
+    const avatarsHtml = AVATAR_OPTIONS.map(a =>
+        `<button class="btn btn-sm ${me.avatar === a ? 'btn-primary' : 'btn-ghost'}" onclick="actionSetAvatar('${a}')" style="font-size:18px; padding:6px 10px;">${a}</button>`
+    ).join('');
 
     const swatches = (current, setter) => COLOR_OPTIONS.map(c =>
         `<button onclick="${setter}('${c}')" title="${c}" style="width:28px; height:28px; border-radius:50%; background:${c}; border:2px solid ${current === c ? 'var(--paper)' : 'transparent'}; cursor:pointer; margin:3px; padding:0;"></button>`
@@ -252,12 +250,7 @@ function renderCustomizationPicker() {
 }
 
 function avatarChip(p) {
-    const src = p.avatar || '';
-    const isImg = src.startsWith('/avatars/') || src.startsWith('http');
-    const content = isImg 
-        ? `<img src="${src}" alt="" style="width:100%; height:100%; object-fit:cover; border-radius:50%;">`
-        : src;
-    return `<div class="ptable-avatar" style="border-color:${p.outline_color || '#4a4e28'};">${content}</div>`;
+    return `<div class="ptable-avatar" style="border-color:${p.outline_color || '#4a4e28'};">${p.avatar || ''}</div>`;
 }
 
 function nameColorStyle(p) {
@@ -826,9 +819,7 @@ function renderPlayerRow(p, room, isHost) {
     return `
         <li>
             <span style="display:flex; align-items:center; gap:8px;">
-               ${p.avatar ? (p.avatar.startsWith('/avatars/') || p.avatar.startsWith('http') ?
-`<img src="${p.avatar}" style="width:32px; height:32px; border-radius:50%; object-fit:cover; margin-right:4px; vertical-align:middle; border:1px solid #4a4e28;">` :
-`<span style="font-size:18px;">${p.avatar}</span>`) : ''}
+                ${p.avatar ? `<span style="font-size:18px;">${p.avatar}</span>` : ''}
                 <span class="player-name" style="${nameColorStyle(p)}">${p.seat_number ? '№' + p.seat_number + ' ' : ''}${escapeHtml(p.name)}${isMe ? ' (Вы)' : ''}</span>
                 ${isHostRow ? '<span class="host-badge">Ведущий</span>' : ''}
                 <span class="badge ${p.is_ready ? 'badge-ready' : 'badge-notready'}">${p.is_ready ? 'Готов' : 'Не готов'}</span>
