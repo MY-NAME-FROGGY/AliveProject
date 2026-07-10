@@ -1447,6 +1447,8 @@ async function actionToggleScenarioVisible() {
 }
 
 function canRevealCategory(card, room, category) {
+    if (category === 'goal') return { ok: false, reason: 'Цель нельзя открывать другим игрокам.' };
+    
     const roundIdx = (room.current_round || 1) - 1;
     const slots = (room.settings?.round_reveals || [])[roundIdx] || ['any'];
     const limit = slots.length;
