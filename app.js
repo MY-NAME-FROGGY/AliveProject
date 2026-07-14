@@ -373,9 +373,24 @@ function generateBalancedCard(pool) {
 }
 
 async function dbFetchCharacterPool() {
-    const { data, error } = await supabaseClient.from('character_pool').select('id,category,text,value');
-    if (error) { console.error('Ошибка загрузки character_pool:', error); return []; }
-    return data || [];
+    // [ФИКС] Supabase/PostgREST по умолчанию отдаёт максимум 1000 строк за один select.
+    // character_pool теперь ~1500+ строк — без пагинации хвост категорий (в т.ч. большинство,
+    // кроме тех, что физически шли первыми) просто не возвращался, отсюда "генерируется только
+    // большой багаж". Достаём постранично, пока не выберем всё.
+    let all = [];
+    let from = 0;
+    const pageSize = 1000;
+    while (true) {
+        const { data, error } = await supabaseClient.from('character_pool')
+            .select('id,category,text,value')
+            .range(from, from + pageSize - 1);
+        if (error) { console.error('Ошибка загрузки character_pool:', error); break; }
+        if (!data || data.length === 0) break;
+        all = all.concat(data);
+        if (data.length < pageSize) break;
+        from += pageSize;
+    }
+    return all;
 }
 
 async function dbCardsExist(roomCode) {
