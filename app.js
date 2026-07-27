@@ -367,7 +367,7 @@ function generateBalancedCard(pool) {
         if (candidates.length === 0) candidates = items;
 
         const pick = candidates[Math.floor(Math.random() * candidates.length)];
-        card.push({ category: cat, pool_id: pick.id, text: pick.text, value: pick.value });
+        card.push({ category: cat, pool_id: pick.id, text: pick.text, value: pick.value, target_type: pick.target_type || null });
     }
     return card;
 }
@@ -382,7 +382,8 @@ async function dbFetchCharacterPool() {
     const pageSize = 1000;
     while (true) {
         const { data, error } = await supabaseClient.from('character_pool')
-            .select('id,category,text,value')
+            .select('id,category,text,value,target_type')
+            .eq('is_active', true)
             .range(from, from + pageSize - 1);
         if (error) { console.error('Ошибка загрузки character_pool:', error); break; }
         if (!data || data.length === 0) break;
@@ -402,7 +403,8 @@ async function dbCardsExist(roomCode) {
 async function dbInsertPlayerCard(roomCode, playerId, card) {
     const rows = card.map(c => ({
         room_code: roomCode, player_id: playerId, category: c.category,
-        pool_id: c.pool_id, text: c.text, value: c.value, revealed: false
+        pool_id: c.pool_id, text: c.text, value: c.value, revealed: false,
+        target_type: c.target_type || null
     }));
     const { error } = await supabaseClient.from('player_cards').insert(rows);
     if (error) console.error('Ошибка записи карточки для игрока ' + playerId + ':', error);
@@ -510,7 +512,8 @@ async function assignPresetCardsForRoom(roomCode, players, hostId, scenarioId) {
             const traits = await dbFetchPresetTraits(shuffledPresets[i].id);
             const rows = traits.map(t => ({
                 room_code: roomCode, player_id: p.id, category: t.category,
-                pool_id: null, text: t.text, value: t.value, revealed: false
+                pool_id: null, text: t.text, value: t.value, revealed: false,
+                target_type: t.target_type || null
             }));
             const { error } = await supabaseClient.from('player_cards').insert(rows);
             if (error) console.error('Ошибка назначения готовой карточки игроку ' + p.id + ':', error);
@@ -1576,15 +1579,34 @@ async function loadMyCard() {
                 extra = '<div class="muted-note" style="font-size:11px; margin-top:3px;">(вы выбыли — использование недоступно)</div>';
             } else {
                 const others = state.players.filter(p => p.id !== state.playerId && p.id !== room.host_id);
-                extra = `<div style="margin-top:6px;">
-                        <button class="btn btn-sm btn-primary" onclick="toggleTargetPicker('${c.id}')">Использовать</button>
-                        <div id="targetPicker_${c.id}" style="display:none; margin-top:6px;">
-                            ${others.length ? others.map(p =>
-                                `<label class="muted-note" style="display:block;"><input type="checkbox" value="${p.id}" style="width:auto; display:inline-block; margin-right:4px;">${escapeHtml(p.name)}</label>`
-                            ).join('') : '<span class="muted-note">Нет других игроков для выбора цели.</span>'}
-                            <button class="btn btn-sm btn-danger" style="margin-top:4px;" onclick="actionUseSpecialCondition('${c.id}')">Подтвердить использование</button>
-                        </div>
-                    </div>`;
+                const tt = c.target_type || 'self'; // легаси-карты без разметки — считаем «на себя»
+
+                if (tt === 'self') {
+                    // Эффект не требует цели — сразу используем без списка игроков.
+                    extra = `<div style="margin-top:6px;">
+                            <button class="btn btn-sm btn-primary" onclick="actionUseSpecialCondition('${c.id}')">Использовать</button>
+                        </div>`;
+                } else if (tt === 'all') {
+                    // Эффект бьёт по всем остальным игрокам автоматически — цель выбирать не нужно.
+                    extra = `<div style="margin-top:6px;">
+                            <button class="btn btn-sm btn-primary" onclick="actionUseSpecialCondition('${c.id}')">Использовать (на всех игроков)</button>
+                        </div>`;
+                } else {
+                    // 'one' -> ровно один переключатель (radio), 'two' -> ровно два чекбокса
+                    const inputType = tt === 'two' ? 'checkbox' : 'radio';
+                    const needCount = tt === 'two' ? 2 : 1;
+                    const hint = tt === 'two' ? 'Выберите ровно 2 цели' : 'Выберите 1 цель';
+                    extra = `<div style="margin-top:6px;">
+                            <button class="btn btn-sm btn-primary" onclick="toggleTargetPicker('${c.id}')">Использовать</button>
+                            <div id="targetPicker_${c.id}" data-target-type="${tt}" data-need-count="${needCount}" style="display:none; margin-top:6px;">
+                                <div class="muted-note" style="font-size:11px;">${hint}</div>
+                                ${others.length ? others.map(p =>
+                                    `<label class="muted-note" style="display:block;"><input type="${inputType}" name="targetPicker_${c.id}_radio" value="${p.id}" style="width:auto; display:inline-block; margin-right:4px;">${escapeHtml(p.name)}</label>`
+                                ).join('') : '<span class="muted-note">Нет других игроков для выбора цели.</span>'}
+                                <button class="btn btn-sm btn-danger" style="margin-top:4px;" onclick="actionUseSpecialCondition('${c.id}')">Подтвердить использование</button>
+                            </div>
+                        </div>`;
+                }
             }
         } else if (isSpecial && c.used) {
             liClass = 'special-used';
@@ -1617,10 +1639,23 @@ function toggleTargetPicker(cardId) {
 }
 
 async function actionUseSpecialCondition(cardId) {
-    const picker = document.getElementById('targetPicker_' + cardId);
-    const targets = picker ? Array.from(picker.querySelectorAll('input[type=checkbox]:checked')).map(cb => cb.value) : [];
-
     const card = (state.myCardCache || []).find(c => String(c.id) === String(cardId));
+    const tt = (card && card.target_type) || 'self';
+    const picker = document.getElementById('targetPicker_' + cardId);
+
+    let targets = [];
+    if (tt === 'self') {
+        targets = [];
+    } else if (tt === 'all') {
+        targets = state.players.filter(p => p.id !== state.playerId && p.id !== state.room.host_id).map(p => p.id);
+    } else {
+        targets = picker ? Array.from(picker.querySelectorAll('input:checked')).map(cb => cb.value) : [];
+        const needCount = tt === 'two' ? 2 : 1;
+        if (targets.length !== needCount) {
+            return alert('Нужно выбрать ровно ' + needCount + ' цел' + (needCount === 1 ? 'ь' : 'и') + ' для этого спецусловия.');
+        }
+    }
+
     const { error } = await supabaseClient.from('player_cards').update({ used: true, used_targets: targets }).eq('id', cardId);
     if (error) { console.error('Ошибка использования спецусловия:', error); return alert('Не удалось использовать спецусловие: ' + error.message); }
 
