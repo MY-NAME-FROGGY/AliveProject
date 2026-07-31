@@ -1,22 +1,14 @@
-/* AliveProject — universal special-condition UI. */
+/* AliveProject — unified effect UI / Stage 3 */
 (function (window) {
   'use strict';
-
   const UI = {
     overlay: null,
-
     init() {
       this.overlay = document.getElementById('aliveEffectModal');
       if (!this.overlay) return;
-      this.overlay.addEventListener('click', e => {
-        if (e.target === this.overlay) this.close(false);
-      });
+      this.overlay.addEventListener('click', e => { if (e.target === this.overlay) this.close(false); });
     },
-
-    escape(v) {
-      return String(v ?? '').replace(/[&<>"']/g, s => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#039;' }[s]));
-    },
-
+    escape(v) { return String(v ?? '').replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[s])); },
     close(value = false) {
       if (!this.overlay) return;
       this.overlay.classList.remove('alive-effect-open');
@@ -24,47 +16,20 @@
       this.overlay._resolve = null;
       if (resolve) resolve(value);
     },
-
     confirm(card, targets) {
       return new Promise(resolve => {
         this.overlay._resolve = resolve;
-        this.overlay.innerHTML = `
-          <div class="alive-effect-box">
-            <div class="alive-effect-kicker">СПЕЦУСЛОВИЕ</div>
-            <button class="alive-effect-close" type="button" data-close>×</button>
-            <h2>Использовать карту?</h2>
-            <p class="alive-effect-text">${this.escape(card.text)}</p>
-            ${targets.length ? `<div class="alive-effect-targets"><span>Цель:</span><strong>${targets.map(t => this.escape(t.name || t.text || t.id)).join(', ')}</strong></div>` : ''}
-            <div class="alive-effect-warning">Карта будет потрачена только после успешного выполнения механики.</div>
-            <div class="alive-effect-actions">
-              <button class="btn btn-ghost" type="button" data-close>Отмена</button>
-              <button class="btn btn-danger" type="button" data-confirm>Использовать</button>
-            </div>
-          </div>`;
+        this.overlay.innerHTML = `<div class="alive-effect-box"><div class="alive-effect-kicker">СПЕЦУСЛОВИЕ</div><button class="alive-effect-close" type="button" data-close>×</button><h2>Использовать карту?</h2><p class="alive-effect-text">${this.escape(card.text)}</p>${targets.length ? `<div class="alive-effect-targets"><span>Цель:</span><strong>${targets.map(t => this.escape(t.name || t.text || t.id)).join(', ')}</strong></div>` : ''}<div class="alive-effect-warning">Карта будет потрачена только после успешного выполнения механики.</div><div class="alive-effect-actions"><button class="btn btn-ghost" type="button" data-close>Отмена</button><button class="btn btn-danger" type="button" data-confirm>Использовать</button></div></div>`;
         this.overlay.classList.add('alive-effect-open');
         this.overlay.querySelectorAll('[data-close]').forEach(b => b.onclick = () => this.close(false));
         this.overlay.querySelector('[data-confirm]').onclick = () => this.close(true);
       });
     },
-
     pick(card, candidates, count) {
       return new Promise(resolve => {
         this.overlay._resolve = resolve;
         const selected = new Set();
-        this.overlay.innerHTML = `
-          <div class="alive-effect-box">
-            <div class="alive-effect-kicker">ВЫБОР ЦЕЛИ</div>
-            <button class="alive-effect-close" type="button" data-close>×</button>
-            <h2>${count === 2 ? 'Выберите двух игроков' : 'Выберите цель'}</h2>
-            <div class="alive-effect-counter">Выбрано: <strong data-count>0</strong> / ${count}</div>
-            <div class="alive-effect-list">
-              ${candidates.map(c => `<button type="button" class="alive-effect-target" data-id="${this.escape(c.id)}"><span>${this.escape(c.name || c.text || c.id)}</span><b>✓</b></button>`).join('')}
-            </div>
-            <div class="alive-effect-actions">
-              <button class="btn btn-ghost" type="button" data-close>Отмена</button>
-              <button class="btn btn-primary" type="button" data-confirm disabled>Продолжить</button>
-            </div>
-          </div>`;
+        this.overlay.innerHTML = `<div class="alive-effect-box"><div class="alive-effect-kicker">ВЫБОР ЦЕЛИ</div><button class="alive-effect-close" type="button" data-close>×</button><h2>${count === 2 ? 'Выберите двух игроков' : 'Выберите цель'}</h2><div class="alive-effect-counter">Выбрано: <strong data-count>0</strong> / ${count}</div><div class="alive-effect-list">${candidates.map(c => `<button type="button" class="alive-effect-target" data-id="${this.escape(c.id)}"><span>${this.escape(c.avatar || '👤')}</span><b>${this.escape(c.name || c.text || c.id)}</b></button>`).join('')}</div><div class="alive-effect-actions"><button class="btn btn-ghost" type="button" data-close>Отмена</button><button class="btn btn-primary" type="button" data-confirm disabled>Продолжить</button></div></div>`;
         this.overlay.classList.add('alive-effect-open');
         const countEl = this.overlay.querySelector('[data-count]');
         const confirm = this.overlay.querySelector('[data-confirm]');
@@ -79,9 +44,15 @@
         confirm.onclick = () => this.close(candidates.filter(c => selected.has(String(c.id))));
       });
     },
-
-    propertyPick(card, properties) { return this.pick(card, properties, 1); }
+    pickTrait(cards, title) {
+      return new Promise(resolve => {
+        this.overlay._resolve = resolve;
+        this.overlay.innerHTML = `<div class="alive-effect-box"><div class="alive-effect-kicker">ВЫБОР ХАРАКТЕРИСТИКИ</div><button class="alive-effect-close" type="button" data-close>×</button><h2>${this.escape(title)}</h2><div class="alive-effect-list">${cards.map(c => `<button type="button" class="alive-effect-target ae-trait-option" data-id="${this.escape(c.id)}"><b>${this.escape(c.category)}</b><span>${this.escape(c.text)}</span></button>`).join('')}</div><div class="alive-effect-actions"><button class="btn btn-ghost" type="button" data-close>Отмена</button></div></div>`;
+        this.overlay.classList.add('alive-effect-open');
+        this.overlay.querySelectorAll('[data-close]').forEach(b => b.onclick = () => this.close(false));
+        this.overlay.querySelectorAll('.ae-trait-option').forEach(b => b.onclick = () => this.close(cards.find(c => String(c.id) === b.dataset.id) || false));
+      });
+    }
   };
-
   window.AliveEffectsUI = UI;
 })(window);
