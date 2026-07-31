@@ -367,7 +367,7 @@ function generateBalancedCard(pool) {
         if (candidates.length === 0) candidates = items;
 
         const pick = candidates[Math.floor(Math.random() * candidates.length)];
-        card.push({ category: cat, pool_id: pick.id, text: pick.text, value: pick.value, target_type: pick.target_type || null });
+        card.push({ category: cat, pool_id: pick.id, text: pick.text, value: pick.value, target_type: pick.target_type || null, effect_key: pick.effect_key || null, effect_params: pick.effect_params || {}, target_kind: pick.target_kind || 'player' });
     }
     return card;
 }
@@ -382,7 +382,7 @@ async function dbFetchCharacterPool() {
     const pageSize = 1000;
     while (true) {
         const { data, error } = await supabaseClient.from('character_pool')
-            .select('id,category,text,value,target_type')
+            .select('id,category,text,value,target_type,effect_key,effect_params,target_kind')
             .eq('is_active', true)
             .range(from, from + pageSize - 1);
         if (error) { console.error('Ошибка загрузки character_pool:', error); break; }
@@ -404,7 +404,7 @@ async function dbInsertPlayerCard(roomCode, playerId, card) {
     const rows = card.map(c => ({
         room_code: roomCode, player_id: playerId, category: c.category,
         pool_id: c.pool_id, text: c.text, value: c.value, revealed: false,
-        target_type: c.target_type || null
+        target_type: c.target_type || null, effect_key: c.effect_key || null, effect_params: c.effect_params || {}, target_kind: c.target_kind || 'player'
     }));
     const { error } = await supabaseClient.from('player_cards').insert(rows);
     if (error) console.error('Ошибка записи карточки для игрока ' + playerId + ':', error);
