@@ -1,51 +1,12 @@
-/* AliveProject — Card Effects UI */
-.ae-target-box{
-  margin-top:8px;
-  padding:10px;
-  border:1px solid #4a4e28;
-  border-radius:8px;
-  background:var(--void);
-}
-.ae-target-title{
-  color:var(--hazard);
-  font-size:10px;
-  font-weight:800;
-  letter-spacing:.08em;
-  text-transform:uppercase;
-  margin-bottom:7px;
-}
-.ae-target-list{
-  display:grid;
-  gap:5px;
-  margin-bottom:8px;
-}
-.ae-target{
-  display:flex;
-  align-items:center;
-  gap:7px;
-  padding:7px 8px;
-  border:1px solid #33361f;
-  border-radius:6px;
-  cursor:pointer;
-}
-.ae-target:hover{
-  border-color:var(--hazard);
-}
-.ae-target input{
-  width:auto;
-  margin:0;
-}
-.ae-target span{
-  font-size:17px;
-}
-.ae-target b{
-  font-size:12px;
-  color:var(--paper);
-}
-.ae-unmapped{
-  margin-top:6px;
-  padding:6px 8px;
-  border-left:3px solid #777;
-  color:#888;
-  font-size:11px;
-}
+/* AliveProject — unified effect UI */
+.ae-target-box{margin-top:8px;padding:10px;border:1px solid #4a4e28;border-radius:8px;background:var(--void)}
+.ae-target-title{color:var(--hazard);font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;margin-bottom:7px}
+.ae-target-list{display:grid;gap:5px;margin-bottom:8px}
+.ae-target{display:flex;align-items:center;gap:7px;padding:7px 8px;border:1px solid #33361f;border-radius:6px;cursor:pointer}
+.ae-target:hover{border-color:var(--hazard)}
+.ae-target input{width:auto;margin:0}.ae-target span{font-size:17px}.ae-target b{font-size:12px;color:var(--paper)}
+.ae-unmapped{margin-top:6px;padding:6px 8px;border-left:3px solid #777;color:#888;font-size:11px}
+.alive-effect-modal{position:fixed;inset:0;z-index:9999;display:none;align-items:center;justify-content:center;padding:18px;background:rgba(0,0,0,.72)}
+.alive-effect-modal.alive-effect-open{display:flex}
+.alive-effect-box{position:relative;width:min(560px,100%);max-height:88vh;overflow:auto;padding:22px;border:1px solid #5d6332;border-radius:10px;background:var(--void-2,#171812);box-shadow:0 18px 70px rgba(0,0,0,.55)}
+.alive-effect-kicker{font-size:10px;letter-spacing:.14em;font-weight:800;color:var(--hazard);margin-bottom:7px}.alive-effect-box h2{margin:0 30px 10px 0}.alive-effect-text{color:var(--paper);line-height:1.45}.alive-effect-warning{margin:12px 0;padding:9px;border-left:3px solid var(--hazard);font-size:12px;color:#bbb}.alive-effect-close{position:absolute;right:10px;top:8px;border:0;background:none;color:#aaa;font-size:28px;cursor:pointer}.alive-effect-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}.alive-effect-targets{display:flex;gap:8px;align-items:center;padding:8px;background:var(--void);border-radius:6px}.alive-effect-counter{font-size:12px;color:#aaa;margin-bottom:8px}.alive-effect-list{display:grid;gap:6px}.alive-effect-target{display:flex;align-items:center;gap:10px;width:100%;padding:10px;border:1px solid #33361f;border-radius:7px;background:var(--void);color:var(--paper);text-align:left;cursor:pointer}.alive-effect-target:hover,.alive-effect-target.selected{border-color:var(--hazard)}.alive-effect-target span{color:#aaa}.ae-trait-option{flex-direction:column;align-items:flex-start}.ae-trait-option b{color:var(--hazard);font-size:11px;text-transform:uppercase}.ae-trait-option span{color:var(--paper);font-size:13px;line-height:1.35}
