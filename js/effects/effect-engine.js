@@ -1,6 +1,5 @@
-/* AliveProject — Effect Engine
- * Safe, transactional-by-order client dispatcher.
- * It never marks a card used until its handler succeeds.
+/* AliveProject — Unified Effect Engine / Stage 3
+ * Единственный диспетчер спецусловий. Не подключайте card-effect-engine.js одновременно.
  */
 (function (window) {
   'use strict';
@@ -12,37 +11,62 @@
       if (!key || typeof handler !== 'function') throw new Error('Invalid effect registration');
       this.handlers.set(key, { handler, meta });
     },
-
     has(key) { return this.handlers.has(key); },
     get(key) { return this.handlers.get(key) || null; },
     list() { return [...this.handlers.keys()]; },
 
+    normalizeTargetType(type) {
+      const aliases = {
+        one_other: 'one',
+        one_any: 'one',
+        two_other: 'two',
+        host: 'one',
+        none: 'self'
+      };
+      return aliases[type] || type || 'self';
+    },
+
     async execute(ctx) {
-      const key = ctx.card?.effect_key;
+      const card = ctx.card;
+      const key = card?.effect_key;
       if (!key) throw new Error('Для этой карты ещё не задан effect_key. Карта не потрачена.');
+
       const entry = this.get(key);
       if (!entry) throw new Error(`Эффект «${key}» ещё не зарегистрирован. Карта не потрачена.`);
 
-      const targetType = ctx.card.target_type || entry.meta.targetType || 'self';
+      const targetType = this.normalizeTargetType(card.target_type || entry.meta.targetType || 'self');
       const targets = Array.isArray(ctx.targets) ? ctx.targets : [];
       validateTargetCount(targetType, targets);
 
-      const result = await entry.handler({ ...ctx, targetType, effectKey: key });
+      const result = await entry.handler({
+        ...ctx,
+        targetType,
+        effectKey: key,
+        params: card.effect_params || {}
+      });
+
       if (result === false || result?.cancelled) return { success: false, cancelled: true };
       if (result?.success === false) throw new Error(result.error || 'Эффект не выполнен');
 
-      const targetIds = targets.map(t => typeof t === 'string' ? t : t.id).filter(Boolean);
-      const { db, card } = ctx;
-      const { error: cardError } = await db
+      const targetIds = targets.map(t => typeof t === 'string' ? t : t?.id).filter(Boolean);
+      const { db } = ctx;
+
+      const { data: marked, error: cardError } = await db
         .from('player_cards')
         .update({ used: true, used_targets: targetIds })
         .eq('id', card.id)
-        .eq('used', false);
+        .eq('player_id', ctx.player.id)
+        .eq('used', false)
+        .select('id')
+        .maybeSingle();
       if (cardError) throw cardError;
+      if (!marked) throw new Error('Карта уже была использована или недоступна. Изменения не подтверждены.');
 
       await insertEvent(ctx, {
-        type: 'neutral',
-        text: `${ctx.player.name || 'Игрок'} использовал(а) спецусловие: ${card.text}`,
+        type: entry.meta.eventType || 'neutral',
+        text: entry.meta.eventText
+          ? entry.meta.eventText(ctx, result)
+          : `${ctx.player.name || 'Игрок'} использовал(а) спецусловие: ${card.text}`,
         targetId: targetIds[0] || null
       });
 
