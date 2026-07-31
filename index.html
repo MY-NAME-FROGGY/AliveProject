@@ -5,16 +5,26 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ОСТАТЬСЯ В ЖИВЫХ</title>
 <link rel="stylesheet" href="style.css">
-<!-- Подключаем Supabase из надежного CDN -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
-
 <div class="wrap" id="app">
-    <h1>ОСТАТЬСЯ <span>В ЖИВЫХ</span></h1>
-    <p style="text-align:center;">Загрузка игры...</p>
+  <h1>ОСТАТЬСЯ <span>В ЖИВЫХ</span></h1>
+  <p style="text-align:center;">Загрузка игры...</p>
 </div>
 
+<!-- Universal effect modal. It is intentionally outside #app because app.js rerenders #app. -->
+<div id="aliveEffectModal" class="alive-effect-modal" aria-hidden="true"></div>
+
 <script src="app.js"></script>
+<script src="js/effects/effect-engine.js"></script>
+<script src="js/effects/effect-registry.js"></script>
+<script src="js/ui/effects-ui.js"></script>
+<script src="js/effects/effect-compat.js"></script>
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    if (window.AliveEffectsUI) window.AliveEffectsUI.init();
+  });
+</script>
 </body>
 </html>
