@@ -80,7 +80,9 @@ const state = {
     gamePhaseTick: null,
     gameScenario: null,
     gameChatRecipient: null,
-    cardsGenerationInFlight: false
+    cardsGenerationInFlight: false,
+    roomBunkerProperties: [],
+    lastBunkerRoundCleanup: null
 };
 
 localStorage.setItem('playerId', state.playerId);
@@ -367,7 +369,7 @@ function generateBalancedCard(pool) {
         if (candidates.length === 0) candidates = items;
 
         const pick = candidates[Math.floor(Math.random() * candidates.length)];
-        card.push({ category: cat, pool_id: pick.id, text: pick.text, value: pick.value, target_type: pick.target_type || null, effect_key: pick.effect_key || null, effect_params: pick.effect_params || {}, target_kind: pick.target_kind || 'player' });
+        card.push({ category: cat, pool_id: pick.id, text: pick.text, value: pick.value, target_type: pick.target_type || null, action_type: pick.action_type || null, effect_key: pick.effect_key || null, effect_params: pick.effect_params || {}, target_kind: pick.target_kind || 'player' });
     }
     return card;
 }
@@ -404,7 +406,7 @@ async function dbInsertPlayerCard(roomCode, playerId, card) {
     const rows = card.map(c => ({
         room_code: roomCode, player_id: playerId, category: c.category,
         pool_id: c.pool_id, text: c.text, value: c.value, revealed: false,
-        target_type: c.target_type || null, effect_key: c.effect_key || null, effect_params: c.effect_params || {}, target_kind: c.target_kind || 'player'
+        target_type: c.target_type || null, action_type: c.action_type || null, effect_key: c.effect_key || null, effect_params: c.effect_params || {}, target_kind: c.target_kind || 'player'
     }));
     const { error } = await supabaseClient.from('player_cards').insert(rows);
     if (error) console.error('Ошибка записи карточки для игрока ' + playerId + ':', error);
@@ -420,6 +422,59 @@ async function dbFetchMyCard(roomCode, playerId) {
 async function dbClearCards(roomCode) {
     const { error } = await supabaseClient.from('player_cards').delete().eq('room_code', roomCode);
     if (error) console.error('Ошибка очистки player_cards:', error);
+}
+
+// ==========================================
+// СОСТОЯНИЕ БУНКЕРА В КОНКРЕТНОЙ ИГРЕ
+// ==========================================
+async function dbSyncRoomBunkerProperties(roomCode, scenarioId) {
+    if (!roomCode || !scenarioId) return;
+    const { error } = await supabaseClient.rpc('sync_room_bunker_properties', {
+        p_room_code: roomCode,
+        p_scenario_id: scenarioId
+    });
+    if (error) console.error('Ошибка синхронизации свойств бункера:', error);
+}
+
+async function dbFetchRoomBunkerProperties(roomCode) {
+    if (!roomCode) return [];
+    const { data, error } = await supabaseClient.from('room_bunker_properties')
+        .select('id,room_code,property_id,type,text,available,revealed,blocked,blocked_until_round')
+        .eq('room_code', roomCode)
+        .order('type', { ascending: true })
+        .order('id', { ascending: true });
+    if (error) {
+        console.error('Ошибка загрузки состояния бункера:', error);
+        return [];
+    }
+    return data || [];
+}
+
+async function refreshRoomBunkerProperties() {
+    state.roomBunkerProperties = await dbFetchRoomBunkerProperties(state.currentRoomCode);
+    return state.roomBunkerProperties;
+}
+
+async function dbCleanupRoundBunkerEffects(roomCode, round) {
+    if (!roomCode || !round) return;
+    const { error } = await supabaseClient.rpc('cleanup_round_bunker_effects', {
+        p_room_code: roomCode,
+        p_round: round
+    });
+    if (error) console.error('Ошибка очистки эффектов бункера:', error);
+}
+
+async function dbExecuteBunkerEffect(card, targetPropertyId = null) {
+    const { data, error } = await supabaseClient.rpc('execute_bunker_effect', {
+        p_room_code: state.currentRoomCode,
+        p_player_id: state.playerId,
+        p_card_id: Number(card.id),
+        p_effect_key: card.effect_key,
+        p_target_property_id: targetPropertyId ? Number(targetPropertyId) : null,
+        p_effect_params: card.effect_params || {}
+    });
+    if (error) throw error;
+    return data;
 }
 
 async function dbFetchNote(roomCode, playerId) {
@@ -513,7 +568,11 @@ async function assignPresetCardsForRoom(roomCode, players, hostId, scenarioId) {
             const rows = traits.map(t => ({
                 room_code: roomCode, player_id: p.id, category: t.category,
                 pool_id: null, text: t.text, value: t.value, revealed: false,
-                target_type: t.target_type || null
+                target_type: t.target_type || null,
+                action_type: t.action_type || null,
+                effect_key: t.effect_key || null,
+                effect_params: t.effect_params || {},
+                target_kind: t.target_kind || 'player'
             }));
             const { error } = await supabaseClient.from('player_cards').insert(rows);
             if (error) console.error('Ошибка назначения готовой карточки игроку ' + p.id + ':', error);
@@ -594,6 +653,8 @@ async function pollTick() {
                     await generateCardsForRoom(state.currentRoomCode, players, room.host_id);
                 }
                 const activeBonusIds = await selectActiveBonusIds(room.scenario_id, players.length);
+                await dbSyncRoomBunkerProperties(state.currentRoomCode, room.scenario_id);
+                await refreshRoomBunkerProperties();
                 const revealSeconds = phaseDuration('reveal');
                 const revealEnds = revealSeconds > 0 ? new Date(Date.now() + revealSeconds * 1000).toISOString() : null;
                 
@@ -1155,7 +1216,7 @@ function renderGameTable() {
                     <div class="section-title"><h2>Бункер</h2>
                         ${isHost ? `<button class="btn btn-ghost btn-sm" onclick="actionRevealBonus()">Открыть доп. свойство</button>` : ''}
                     </div>
-                    <ul class="prop-list" id="bunkerRevealedList"></ul>
+                    <div id="bunkerRevealedList"></div>
                 </div>
                 <div class="panel">
                     <h2>Хроника событий</h2>
@@ -1550,6 +1611,9 @@ async function loadMyCard() {
     }
 
     const room = state.room;
+    if (card.some(c => c.category === 'special_condition' && c.target_kind === 'property')) {
+        await refreshRoomBunkerProperties();
+    }
     const note = await dbFetchNote(state.currentRoomCode, state.playerId);
 
     const revealOrder = state.players.filter(p => p.id !== room.host_id);
@@ -1578,34 +1642,45 @@ async function loadMyCard() {
             if (amEliminated) {
                 extra = '<div class="muted-note" style="font-size:11px; margin-top:3px;">(вы выбыли — использование недоступно)</div>';
             } else {
-                const others = state.players.filter(p => p.id !== state.playerId && p.id !== room.host_id);
-                const tt = c.target_type || 'self'; // легаси-карты без разметки — считаем «на себя»
+                const targetKind = c.target_kind || 'player';
+                const tt = c.target_type || 'self';
 
-                if (tt === 'self') {
-                    // Эффект не требует цели — сразу используем без списка игроков.
+                if (targetKind === 'property') {
+                    const properties = (state.roomBunkerProperties || []).filter(p =>
+                        p.available !== false && !(p.blocked && (p.blocked_until_round == null || p.blocked_until_round >= (room.current_round || 1)))
+                    );
+                    const selectedId = `bunkerPropertyPicker_${c.id}`;
                     extra = `<div style="margin-top:6px;">
-                            <button class="btn btn-sm btn-primary" onclick="actionUseSpecialCondition('${c.id}')">Использовать</button>
-                        </div>`;
-                } else if (tt === 'all') {
-                    // Эффект бьёт по всем остальным игрокам автоматически — цель выбирать не нужно.
-                    extra = `<div style="margin-top:6px;">
-                            <button class="btn btn-sm btn-primary" onclick="actionUseSpecialCondition('${c.id}')">Использовать (на всех игроков)</button>
-                        </div>`;
+                        <div class="muted-note" style="font-size:11px; margin-bottom:4px;">Выберите свойство бункера</div>
+                        ${properties.length ? `<select id="${selectedId}" style="width:100%; padding:8px; background:var(--void); border:1px solid #4a4e28; color:var(--paper); border-radius:4px;">${properties.map(p => `<option value="${p.property_id}">${escapeHtml(p.type === 'bonus' ? 'Бонус · ' : 'База · ')}${escapeHtml(p.text)}</option>`).join('')}</select>
+                        <button class="btn btn-sm btn-danger" style="margin-top:5px;" onclick="actionUseSpecialCondition('${c.id}')">Подтвердить использование</button>` : '<span class="muted-note">Нет доступных свойств бункера для выбора.</span>'}
+                    </div>`;
                 } else {
-                    // 'one' -> ровно один переключатель (radio), 'two' -> ровно два чекбокса
-                    const inputType = tt === 'two' ? 'checkbox' : 'radio';
-                    const needCount = tt === 'two' ? 2 : 1;
-                    const hint = tt === 'two' ? 'Выберите ровно 2 цели' : 'Выберите 1 цель';
-                    extra = `<div style="margin-top:6px;">
-                            <button class="btn btn-sm btn-primary" onclick="toggleTargetPicker('${c.id}')">Использовать</button>
-                            <div id="targetPicker_${c.id}" data-target-type="${tt}" data-need-count="${needCount}" style="display:none; margin-top:6px;">
-                                <div class="muted-note" style="font-size:11px;">${hint}</div>
-                                ${others.length ? others.map(p =>
-                                    `<label class="muted-note" style="display:block;"><input type="${inputType}" name="targetPicker_${c.id}_radio" value="${p.id}" style="width:auto; display:inline-block; margin-right:4px;">${escapeHtml(p.name)}</label>`
-                                ).join('') : '<span class="muted-note">Нет других игроков для выбора цели.</span>'}
-                                <button class="btn btn-sm btn-danger" style="margin-top:4px;" onclick="actionUseSpecialCondition('${c.id}')">Подтвердить использование</button>
-                            </div>
-                        </div>`;
+                    const others = state.players.filter(p => p.id !== state.playerId && p.id !== room.host_id);
+
+                    if (tt === 'self') {
+                        extra = `<div style="margin-top:6px;">
+                                <button class="btn btn-sm btn-primary" onclick="actionUseSpecialCondition('${c.id}')">Использовать</button>
+                            </div>`;
+                    } else if (tt === 'all') {
+                        extra = `<div style="margin-top:6px;">
+                                <button class="btn btn-sm btn-primary" onclick="actionUseSpecialCondition('${c.id}')">Использовать (на всех игроков)</button>
+                            </div>`;
+                    } else {
+                        const inputType = tt === 'two' ? 'checkbox' : 'radio';
+                        const needCount = tt === 'two' ? 2 : 1;
+                        const hint = tt === 'two' ? 'Выберите ровно 2 цели' : 'Выберите 1 цель';
+                        extra = `<div style="margin-top:6px;">
+                                <button class="btn btn-sm btn-primary" onclick="toggleTargetPicker('${c.id}')">Использовать</button>
+                                <div id="targetPicker_${c.id}" data-target-type="${tt}" data-need-count="${needCount}" style="display:none; margin-top:6px;">
+                                    <div class="muted-note" style="font-size:11px;">${hint}</div>
+                                    ${others.length ? others.map(p =>
+                                        `<label class="muted-note" style="display:block;"><input type="${inputType}" name="targetPicker_${c.id}_radio" value="${p.id}" style="width:auto; display:inline-block; margin-right:4px;">${escapeHtml(p.name)}</label>`
+                                    ).join('') : '<span class="muted-note">Нет других игроков для выбора цели.</span>'}
+                                    <button class="btn btn-sm btn-danger" style="margin-top:4px;" onclick="actionUseSpecialCondition(\'${c.id}\')">Подтвердить использование</button>
+                                </div>
+                            </div>`;
+                    }
                 }
             }
         } else if (isSpecial && c.used) {
@@ -1638,21 +1713,63 @@ function toggleTargetPicker(cardId) {
     if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
 }
 
+const bunkerEffectHandlers = {
+    decrease_bunker_capacity: async (card) => dbExecuteBunkerEffect(card, null),
+    increase_bunker_capacity: async (card) => dbExecuteBunkerEffect(card, null),
+    block_bunker_property: async (card, targetPropertyId) => {
+        if (!targetPropertyId) throw new Error('Для этого эффекта необходимо выбрать свойство бункера.');
+        return dbExecuteBunkerEffect(card, targetPropertyId);
+    }
+};
+
 async function actionUseSpecialCondition(cardId) {
     const card = (state.myCardCache || []).find(c => String(c.id) === String(cardId));
-    const tt = (card && card.target_type) || 'self';
-    const picker = document.getElementById('targetPicker_' + cardId);
+    if (!card) return alert('Спецусловие не найдено. Обновите страницу и попробуйте снова.');
+    if (card.used) return alert('Это спецусловие уже использовано.');
 
+    const room = state.room;
+    const targetKind = card.target_kind || 'player';
+    const tt = card.target_type || 'self';
+    const picker = document.getElementById('targetPicker_' + cardId);
     let targets = [];
-    if (tt === 'self') {
+    let targetPropertyId = null;
+
+    if (targetKind === 'property') {
+        const propertyPicker = document.getElementById('bunkerPropertyPicker_' + cardId);
+        targetPropertyId = propertyPicker ? propertyPicker.value : null;
+        if (!targetPropertyId) return alert('Выберите свойство бункера.');
+
+        const property = (state.roomBunkerProperties || []).find(p => String(p.property_id) === String(targetPropertyId));
+        if (!property) return alert('Свойство бункера не найдено. Обновите экран.');
+        if (property.available === false) return alert('Это свойство сейчас недоступно.');
+        if (property.blocked && (property.blocked_until_round == null || property.blocked_until_round >= (room.current_round || 1))) {
+            return alert('Это свойство уже заблокировано в текущем раунде.');
+        }
+    } else if (tt === 'self') {
         targets = [];
     } else if (tt === 'all') {
-        targets = state.players.filter(p => p.id !== state.playerId && p.id !== state.room.host_id).map(p => p.id);
+        targets = state.players.filter(p => p.id !== state.playerId && p.id !== room.host_id && p.is_alive !== false).map(p => p.id);
     } else {
         targets = picker ? Array.from(picker.querySelectorAll('input:checked')).map(cb => cb.value) : [];
         const needCount = tt === 'two' ? 2 : 1;
         if (targets.length !== needCount) {
             return alert('Нужно выбрать ровно ' + needCount + ' цел' + (needCount === 1 ? 'ь' : 'и') + ' для этого спецусловия.');
+        }
+    }
+
+    const handler = card.action_type === 'bunker_effect' ? bunkerEffectHandlers[card.effect_key] : null;
+    if (handler) {
+        try {
+            const result = await handler(card, targetPropertyId);
+            if (result === false) return;
+            state.room = await dbFetchRoom(state.currentRoomCode);
+            await refreshRoomBunkerProperties();
+            await loadMyCard();
+            updateGameDynamic();
+            return;
+        } catch (e) {
+            console.error('Ошибка применения bunker_effect:', e);
+            return alert('Не удалось применить эффект. Карта не потрачена.\n' + (e.message || e));
         }
     }
 
@@ -1663,7 +1780,7 @@ async function actionUseSpecialCondition(cardId) {
     const targetNames = targets.map(id => (state.players.find(p => p.id === id) || {}).name).filter(Boolean);
 
     await dbInsertEvent(state.currentRoomCode, state.room.current_round, 'neutral',
-        myName + ' использовал(а) спецусловие: ' + (card ? card.text : '') + (targetNames.length ? ' (цель: ' + targetNames.join(', ') + ')' : ''),
+        myName + ' использовал(а) спецусловие: ' + card.text + (targetNames.length ? ' (цель: ' + targetNames.join(', ') + ')' : ''),
         targets[0] || null, false);
 
     loadMyCard();
@@ -1735,6 +1852,7 @@ async function loadScenarioPanelGame() {
     }
 
     renderScenarioPanelGameContent();
+    await refreshRoomBunkerProperties();
     refreshBunkerList();
     if (isHost) refreshHostNotesPanel();
 }
@@ -1788,13 +1906,22 @@ function refreshBunkerList() {
     const bunkerEl = document.getElementById('bunkerRevealedList');
     if (!bunkerEl) return;
 
-    const revealedIds = state.room.revealed_bonus_ids || [];
+    const room = state.room || {};
+    const capacity = Number(room.settings?.target_survivors || 1);
+    const props = state.roomBunkerProperties || [];
+    const revealedIds = room.revealed_bonus_ids || [];
     const bonus = state.gameScenario?.bonus || [];
     const revealedItems = bonus.filter(b => revealedIds.includes(b.id));
 
-    bunkerEl.innerHTML = revealedItems.length
-        ? revealedItems.map(b => `<li class="bonus"><span class="prop-tag">Бонус</span>${escapeHtml(b.text)}</li>`).join('')
-        : '<li class="muted-note" style="list-style:none;">Пока ничего не открыто.</li>';
+    const blocked = props.filter(p => p.blocked && (p.blocked_until_round == null || p.blocked_until_round >= (room.current_round || 1)));
+    const activeCount = props.filter(p => p.available !== false && !p.blocked).length;
+
+    bunkerEl.innerHTML = `
+        <li style="list-style:none; margin-bottom:8px;"><strong>Вместимость:</strong> ${capacity} чел.</li>
+        ${blocked.length ? `<li style="list-style:none; margin-bottom:8px;"><span class="badge badge-timeout">ЗАБЛОКИРОВАНО: ${blocked.length}</span><div class="muted-note" style="font-size:11px; margin-top:4px;">${blocked.map(p => escapeHtml(p.text)).join('<br>')}</div></li>` : ''}
+        ${revealedItems.length ? revealedItems.map(b => `<li class="bonus"><span class="prop-tag">Бонус</span>${escapeHtml(b.text)}</li>`).join('') : '<li class="muted-note" style="list-style:none;">Пока ничего не открыто.</li>'}
+        <li class="muted-note" style="list-style:none; margin-top:6px;">Активных свойств: ${activeCount}</li>
+    `;
 }
 
 async function hostStartTimer() {
@@ -1931,6 +2058,8 @@ async function hostAdvancePhase() {
         }
         nextPhase = PHASE_SEQUENCE[0];
         nextRound = round + 1;
+        await dbCleanupRoundBunkerEffects(state.currentRoomCode, round);
+        await refreshRoomBunkerProperties();
         nextNominees = [];
         nextNominations = {};
     } else {
@@ -2072,6 +2201,8 @@ async function actionResetToLobby() {
     state.lastRenderedView = null;
     state.lastGameRenderKey = null;
     state.gameScenario = null;
+    state.roomBunkerProperties = [];
+    state.lastBunkerRoundCleanup = null;
 }
 
 // ==========================================
