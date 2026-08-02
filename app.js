@@ -2364,3 +2364,684 @@ async function init() {
 }
 
 init();
+
+// ============================================================
+// STAGE 4.2 — FINAL BUNKER EFFECT CLIENT LAYER
+// ============================================================
+// Этот блок дополняет уже существующую реализацию Stage 4.2.
+// Он не создаёт новую архитектуру, а синхронизирует UI
+// с текущими SQL-функциями:
+//
+//   execute_bunker_effect()
+//   sync_room_bunker_properties()
+//   cleanup_round_bunker_effects()
+//
+// Источник истины:
+//   rooms.settings.target_survivors
+//   room_bunker_properties
+//   player_cards.used
+//   round_effects
+// ============================================================
+
+
+/**
+ * Возвращает текущий номер раунда.
+ */
+function getCurrentRoundSafe() {
+    return Number(state.room?.current_round || state.room?.round || 1);
+}
+
+
+/**
+ * Проверяет, действительно ли свойство заблокировано
+ * именно сейчас.
+ *
+ * blocked_until_round = текущий раунд
+ * означает, что свойство заблокировано до конца текущего раунда.
+ */
+function isBunkerPropertyBlockedNow(property, round = getCurrentRoundSafe()) {
+    if (!property) return false;
+    if (property.available === false) return true;
+    if (!property.blocked) return false;
+
+    if (
+        property.blocked_until_round == null ||
+        Number(property.blocked_until_round) >= Number(round)
+    ) {
+        return true;
+    }
+
+    return false;
+}
+
+
+/**
+ * Возвращает только доступные для выбора свойства.
+ */
+function getAvailableBunkerProperties() {
+    const round = getCurrentRoundSafe();
+
+    return (state.roomBunkerProperties || []).filter(property => {
+        if (property.available === false) return false;
+        if (isBunkerPropertyBlockedNow(property, round)) return false;
+        return true;
+    });
+}
+
+
+/**
+ * Повторно загружает состояние бункера.
+ *
+ * Важно:
+ * SQL является источником истины.
+ * Локальный state никогда не изменяем вручную
+ * после bunker-effect.
+ */
+async function refreshBunkerStateAfterEffect() {
+    if (!state.currentRoomCode) return;
+
+    try {
+        state.room = await dbFetchRoom(state.currentRoomCode);
+
+        state.roomBunkerProperties =
+            await dbFetchRoomBunkerProperties(state.currentRoomCode);
+
+        if (typeof dbFetchPlayers === 'function') {
+            state.players =
+                await dbFetchPlayers(state.currentRoomCode);
+        }
+
+        return true;
+    } catch (error) {
+        console.error(
+            'Ошибка обновления состояния бункера:',
+            error
+        );
+
+        return false;
+    }
+}
+
+
+/**
+ * Безопасное выполнение bunker-effect.
+ *
+ * SQL всё равно является главным валидатором,
+ * поэтому клиент не пытается самостоятельно менять
+ * target_survivors или room_bunker_properties.
+ */
+async function dbExecuteBunkerEffect(card, targetPropertyId = null) {
+
+    if (!card) {
+        throw new Error('Карта спецусловия не найдена.');
+    }
+
+    if (card.category !== 'special_condition') {
+        throw new Error('Эта карта не является спецусловием.');
+    }
+
+    if (card.used) {
+        throw new Error('Это спецусловие уже использовано.');
+    }
+
+    if (!card.effect_key) {
+        throw new Error(
+            'У этого спецусловия отсутствует effect_key.'
+        );
+    }
+
+    if (!state.currentRoomCode) {
+        throw new Error('Игровая комната не определена.');
+    }
+
+    const targetId =
+        targetPropertyId !== null &&
+        targetPropertyId !== undefined &&
+        targetPropertyId !== ''
+            ? Number(targetPropertyId)
+            : null;
+
+
+    // --------------------------------------------------------
+    // Дополнительная клиентская проверка Саботажа.
+    // --------------------------------------------------------
+
+    if (card.effect_key === 'block_bunker_property') {
+
+        if (!targetId) {
+            throw new Error(
+                'Для Саботажа необходимо выбрать свойство бункера.'
+            );
+        }
+
+        const property =
+            (state.roomBunkerProperties || []).find(
+                p => Number(p.property_id) === targetId
+            );
+
+        if (!property) {
+            throw new Error(
+                'Выбранное свойство бункера не найдено.'
+            );
+        }
+
+        if (property.available === false) {
+            throw new Error(
+                'Это свойство бункера недоступно.'
+            );
+        }
+
+        if (isBunkerPropertyBlockedNow(property)) {
+            throw new Error(
+                'Это свойство уже заблокировано в текущем раунде.'
+            );
+        }
+    }
+
+
+    // --------------------------------------------------------
+    // RPC
+    // --------------------------------------------------------
+
+    const { data, error } =
+        await supabaseClient.rpc(
+            'execute_bunker_effect',
+            {
+                p_room_code: state.currentRoomCode,
+                p_player_id: state.playerId,
+                p_card_id: Number(card.id),
+                p_effect_key: card.effect_key,
+                p_target_property_id: targetId,
+                p_effect_params:
+                    card.effect_params || {}
+            }
+        );
+
+    if (error) {
+        console.error(
+            'Ошибка execute_bunker_effect:',
+            error
+        );
+
+        throw error;
+    }
+
+
+    // --------------------------------------------------------
+    // После успешного RPC БД уже изменилась.
+    // Теперь обновляем клиент.
+    // --------------------------------------------------------
+
+    await refreshBunkerStateAfterEffect();
+
+    return data;
+}
+
+
+/**
+ * Актуальные обработчики bunker-effect.
+ *
+ * Не создаём новый const — объект уже существует
+ * в текущем app.js.
+ */
+if (typeof bunkerEffectHandlers !== 'undefined') {
+
+    Object.assign(
+        bunkerEffectHandlers,
+
+        {
+
+            decrease_bunker_capacity: async card => {
+                return dbExecuteBunkerEffect(card, null);
+            },
+
+
+            increase_bunker_capacity: async card => {
+                return dbExecuteBunkerEffect(card, null);
+            },
+
+
+            block_bunker_property: async (
+                card,
+                targetPropertyId
+            ) => {
+
+                if (!targetPropertyId) {
+                    throw new Error(
+                        'Выберите свойство бункера.'
+                    );
+                }
+
+                return dbExecuteBunkerEffect(
+                    card,
+                    targetPropertyId
+                );
+            }
+
+        }
+    );
+}
+
+
+/**
+ * Финальная версия использования спецусловия.
+ *
+ * Она заменяет старую actionUseSpecialCondition,
+ * сохраняя существующий UI.
+ */
+async function actionUseSpecialCondition(cardId) {
+
+    const card =
+        (state.myCardCache || []).find(
+            c => String(c.id) === String(cardId)
+        );
+
+
+    if (!card) {
+        return alert(
+            'Спецусловие не найдено. Обновите страницу.'
+        );
+    }
+
+
+    if (card.used) {
+        return alert(
+            'Это спецусловие уже использовано.'
+        );
+    }
+
+
+    if (card.category !== 'special_condition') {
+        return alert(
+            'Эта карта не является спецусловием.'
+        );
+    }
+
+
+    if (!card.effect_key) {
+        return alert(
+            'У карты отсутствует effect_key.'
+        );
+    }
+
+
+    const room = state.room;
+
+    if (!room) {
+        return alert(
+            'Игровая комната ещё не загружена.'
+        );
+    }
+
+
+    const targetKind =
+        card.target_kind || 'player';
+
+    let targetPropertyId = null;
+    let targets = [];
+
+
+    // ========================================================
+    // TARGET: BUNKER PROPERTY
+    // ========================================================
+
+    if (targetKind === 'property') {
+
+        const picker =
+            document.getElementById(
+                'bunkerPropertyPicker_' + cardId
+            );
+
+
+        targetPropertyId =
+            picker ? picker.value : null;
+
+
+        if (!targetPropertyId) {
+            return alert(
+                'Выберите свойство бункера.'
+            );
+        }
+
+
+        const property =
+            (state.roomBunkerProperties || []).find(
+                p =>
+                    String(p.property_id) ===
+                    String(targetPropertyId)
+            );
+
+
+        if (!property) {
+            return alert(
+                'Свойство бункера не найдено. Обновите экран.'
+            );
+        }
+
+
+        if (property.available === false) {
+            return alert(
+                'Это свойство сейчас недоступно.'
+            );
+        }
+
+
+        if (isBunkerPropertyBlockedNow(property)) {
+            return alert(
+                'Это свойство уже заблокировано в текущем раунде.'
+            );
+        }
+    }
+
+
+    // ========================================================
+    // ОСТАЛЬНЫЕ TARGET TYPE
+    // ========================================================
+
+    else {
+
+        const targetType =
+            card.target_type || 'self';
+
+
+        if (targetType === 'self') {
+            targets = [];
+        }
+
+
+        else if (targetType === 'all') {
+            targets =
+                state.players
+                    .filter(
+                        p =>
+                            p.id !== state.playerId &&
+                            p.is_alive !== false
+                    )
+                    .map(p => p.id);
+        }
+
+
+        else {
+
+            const picker =
+                document.getElementById(
+                    'targetPicker_' + cardId
+                );
+
+
+            if (!picker) {
+                return alert(
+                    'Не удалось открыть выбор цели.'
+                );
+            }
+
+
+            const checked =
+                Array.from(
+                    picker.querySelectorAll(
+                        'input[type="radio"]:checked,' +
+                        'input[type="checkbox"]:checked'
+                    )
+                );
+
+
+            const targetTypeValue =
+                picker.dataset.targetType ||
+                targetType;
+
+
+            const needCount =
+                Number(
+                    picker.dataset.needCount ||
+                    (
+                        targetTypeValue === 'two'
+                            ? 2
+                            : 1
+                    )
+                );
+
+
+            targets =
+                checked.map(
+                    input => input.value
+                );
+
+
+            if (targets.length !== needCount) {
+                return alert(
+                    'Нужно выбрать ровно ' +
+                    needCount +
+                    ' цел' +
+                    (
+                        needCount === 1
+                            ? 'ь'
+                            : 'и'
+                    ) +
+                    ' для этого спецусловия.'
+                );
+            }
+        }
+    }
+
+
+    // ========================================================
+    // BUNKER EFFECT
+    // ========================================================
+
+    const handler =
+        card.action_type === 'bunker_effect'
+            ? bunkerEffectHandlers[card.effect_key]
+            : null;
+
+
+    if (!handler) {
+        return alert(
+            'Для этого спецусловия пока нет обработчика: ' +
+            card.effect_key
+        );
+    }
+
+
+    try {
+
+        // Блокируем кнопки конкретной карты,
+        // чтобы двойной клик не отправил два RPC.
+        const cardButtons =
+            document.querySelectorAll(
+                `[onclick*="${String(cardId)}"]`
+            );
+
+        cardButtons.forEach(button => {
+            button.disabled = true;
+        });
+
+
+        const result =
+            await handler(
+                card,
+                targetPropertyId
+            );
+
+
+        // ----------------------------------------------------
+        // ВАЖНО:
+        // карта должна стать used в БД внутри RPC.
+        // Здесь НЕ делаем update player_cards вручную.
+        // ----------------------------------------------------
+
+
+        // Обновляем комнату и свойства.
+        await refreshBunkerStateAfterEffect();
+
+
+        // Обновляем локальный cache карточек.
+        if (
+            Array.isArray(state.myCardCache)
+        ) {
+
+            const cachedCard =
+                state.myCardCache.find(
+                    c =>
+                        String(c.id) ===
+                        String(cardId)
+                );
+
+            if (cachedCard) {
+                cachedCard.used = true;
+
+                if (
+                    targetPropertyId !== null
+                ) {
+                    cachedCard.used_targets =
+                        [Number(targetPropertyId)];
+                }
+            }
+        }
+
+
+        // ----------------------------------------------------
+        // Если существует перерисовка игры —
+        // запускаем её.
+        // ----------------------------------------------------
+
+        if (typeof renderGame === 'function') {
+            try {
+                renderGame();
+            } catch (renderError) {
+                console.warn(
+                    'Не удалось сразу перерисовать игру:',
+                    renderError
+                );
+            }
+        }
+
+
+        alert(
+            card.effect_key ===
+                'block_bunker_property'
+
+                ? 'Свойство бункера заблокировано до конца текущего раунда.'
+
+                : card.effect_key ===
+                    'increase_bunker_capacity'
+
+                    ? 'Вместимость бункера увеличена.'
+
+                    : 'Вместимость бункера уменьшена.'
+        );
+
+
+        return result;
+
+    } catch (error) {
+
+        console.error(
+            'Ошибка применения спецусловия:',
+            error
+        );
+
+
+        alert(
+            error?.message ||
+            'Не удалось применить спецусловие.'
+        );
+
+
+        // При ошибке снова разрешаем кнопки.
+        const cardButtons =
+            document.querySelectorAll(
+                `[onclick*="${String(cardId)}"]`
+            );
+
+        cardButtons.forEach(button => {
+            button.disabled = false;
+        });
+    }
+}
+
+
+/**
+ * Обновление bunker state после смены раунда.
+ *
+ * cleanup_round_bunker_effects вызывается сервером,
+ * затем клиент перечитывает состояние.
+ */
+async function refreshBunkerStateForCurrentRound() {
+
+    if (!state.currentRoomCode) {
+        return;
+    }
+
+    const round =
+        getCurrentRoundSafe();
+
+
+    try {
+
+        await dbCleanupRoundBunkerEffects(
+            state.currentRoomCode,
+            round - 1
+        );
+
+    } catch (error) {
+
+        console.warn(
+            'Не удалось выполнить cleanup эффектов:',
+            error
+        );
+
+    }
+
+
+    await refreshBunkerStateAfterEffect();
+}
+
+
+/**
+ * Удобный helper для отображения вместимости.
+ */
+function getBunkerCapacity() {
+
+    return Number(
+        state.room?.settings?.target_survivors ??
+        1
+    );
+}
+
+
+/**
+ * Человеческое описание bunker-effect.
+ */
+function getBunkerEffectLabel(effectKey) {
+
+    switch (effectKey) {
+
+        case 'decrease_bunker_capacity':
+            return 'Уменьшение вместимости бункера';
+
+        case 'increase_bunker_capacity':
+            return 'Увеличение вместимости бункера';
+
+        case 'block_bunker_property':
+            return 'Блокировка свойства бункера';
+
+        default:
+            return effectKey || 'Эффект бункера';
+    }
+}
+
+
+/**
+ * Для будущего UI:
+ * получить состояние конкретного свойства.
+ */
+function getBunkerPropertyState(propertyId) {
+
+    return (
+        state.roomBunkerProperties || []
+    ).find(
+        p =>
+            Number(p.property_id) ===
+            Number(propertyId)
+    ) || null;
+}
