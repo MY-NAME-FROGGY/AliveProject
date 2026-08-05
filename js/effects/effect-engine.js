@@ -34,6 +34,15 @@
       const entry = this.get(key);
       if (!entry) throw new Error(`Эффект «${key}» ещё не зарегистрирован. Карта не потрачена.`);
 
+      if (key !== 'block_special_condition') {
+        const { data: blocks, error: blockErr } = await ctx.db.from('round_effects').select('id')
+          .eq('room_code', ctx.room.code).eq('round', ctx.room.current_round || 1)
+          .eq('is_active', true).eq('effect_key', 'block_special_condition')
+          .eq('target_player_id', ctx.player.id);
+        if (blockErr) console.error('[EffectEngine] block check:', blockErr);
+        if (blocks && blocks.length) throw new Error('Использование спецусловий заблокировано у вас в этом раунде.');
+      }
+
       const targetType = this.normalizeTargetType(card.target_type || entry.meta.targetType || 'self');
       const targets = Array.isArray(ctx.targets) ? ctx.targets : [];
       validateTargetCount(targetType, targets);
@@ -47,6 +56,13 @@
 
       if (result === false || result?.cancelled) return { success: false, cancelled: true };
       if (result?.success === false) throw new Error(result.error || 'Эффект не выполнен');
+
+      // Некоторые эффекты (bunker_effect) исполняются через серверный RPC,
+      // который сам помечает карту used и сам пишет game_event.
+      // В этом случае клиент ничего не дублирует.
+      if (result?.skipFinalize) {
+        return { success: true, effectKey: key, targetIds: [], result };
+      }
 
       const targetIds = targets.map(t => typeof t === 'string' ? t : t?.id).filter(Boolean);
       const { db } = ctx;
