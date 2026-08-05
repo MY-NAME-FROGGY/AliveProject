@@ -39,10 +39,16 @@
   }
 
   async function loadProperties(c) {
-    if (!c.room.scenario_id) return [];
-    const { data, error } = await db.from('bunker_properties').select('id,type,text').eq('scenario_id', c.room.scenario_id);
+    const { data, error } = await db.from('room_bunker_properties')
+      .select('id,property_id,type,text,available,revealed,blocked,blocked_until_round')
+      .eq('room_code', c.room.code);
     if (error) throw error;
-    return (data || []).filter(p => p.type === 'base' || p.type === 'bonus');
+    const round = c.room.current_round || 1;
+    return (data || []).filter(p =>
+      (p.type === 'base' || p.type === 'bonus') &&
+      p.available !== false &&
+      !(p.blocked && (p.blocked_until_round == null || p.blocked_until_round >= round))
+    );
   }
 
   async function execute(cardId) {
@@ -77,7 +83,6 @@
     return result.success;
   }
 
-  const oldUse = window.actionUseSpecialCondition;
   window.actionUseSpecialCondition = async function (cardId) {
     try {
       return await execute(cardId);
@@ -158,5 +163,5 @@
     await db.from('rooms').update({ current_phase: 'vote_result', phase_ends_at: null, phase_running: false, phase_paused_remaining: null, last_eliminated_id: eliminatedId }).eq('code', r.code);
   };
 
-  window.AliveEffects = { db, execute, oldUse, oldVote, oldResolve };
+  window.AliveEffects = { db, execute, oldVote, oldResolve };
 })(window);
