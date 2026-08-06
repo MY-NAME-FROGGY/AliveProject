@@ -52,6 +52,17 @@
         this.overlay.querySelectorAll('[data-close]').forEach(b => b.onclick = () => this.close(false));
         this.overlay.querySelectorAll('.ae-trait-option').forEach(b => b.onclick = () => this.close(cards.find(c => String(c.id) === b.dataset.id) || false));
       });
+    },
+    // Выбор категории ВСЛЕПУЮ — показываем только название категории, без текста карты.
+    // Используется для эффектов кражи/обмена «на веру» (блеф), где содержимое неизвестно заранее.
+    pickCategory(categories, title) {
+      return new Promise(resolve => {
+        this.overlay._resolve = resolve;
+        this.overlay.innerHTML = `<div class="alive-effect-box"><div class="alive-effect-kicker">ВСЛЕПУЮ</div><button class="alive-effect-close" type="button" data-close>×</button><h2>${this.escape(title)}</h2><p class="alive-effect-text">Содержимое карты вы узнаете только после применения эффекта.</p><div class="alive-effect-list">${categories.map(cat => `<button type="button" class="alive-effect-target ae-cat-option" data-cat="${this.escape(cat)}"><b>${this.escape(cat)}</b></button>`).join('')}</div><div class="alive-effect-actions"><button class="btn btn-ghost" type="button" data-close>Отмена</button></div></div>`;
+        this.overlay.classList.add('alive-effect-open');
+        this.overlay.querySelectorAll('[data-close]').forEach(b => b.onclick = () => this.close(false));
+        this.overlay.querySelectorAll('.ae-cat-option').forEach(b => b.onclick = () => this.close(b.dataset.cat));
+      });
     }
   };
   window.AliveEffectsUI = UI;
