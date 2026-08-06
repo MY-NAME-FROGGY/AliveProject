@@ -765,6 +765,63 @@
 
   /* ---- Group D: чисто нарративные/социальные карты — не проверяются кодом (честность, договорённости и т.п.),
    * но всё равно проходят через единый движок: тратятся, логируются публично, видны в ленте событий. ---- */
+  // «Двойник» — скопировать эффект, реально использованный другим игроком в этом раунде,
+  // и применить его заново от своего имени (не текст карты — настоящий повторный вызов кода).
+  E.register('clone_special_condition', async ctx => {
+    const sourcePlayer = targetId(ctx);
+    if (!sourcePlayer) throw new Error('Не выбран игрок, чей эффект копируем.');
+
+    const { data: logs, error } = await db(ctx).from('effect_log').select('*')
+      .eq('room_code', roomCode(ctx)).eq('round', round(ctx)).eq('player_id', sourcePlayer)
+      .order('id', { ascending: false });
+    if (error) throw error;
+    const usable = (logs || []).filter(l => l.effect_key !== 'clone_special_condition');
+    if (!usable.length) throw new Error('Этот игрок не использовал спецусловие в этом раунде (или это была карта «Двойник»).');
+
+    let logEntry = usable[0];
+    if (usable.length > 1) {
+      const lines = usable.map((l, i) => `${i + 1}. ${l.effect_key}`).join('\n');
+      const raw = window.prompt(`Какое спецусловие скопировать?\n\n${lines}\n\nВведите номер:`);
+      if (raw === null) return false;
+      const idx = Number(raw) - 1;
+      if (!Number.isInteger(idx) || !usable[idx]) throw new Error('Некорректный выбор.');
+      logEntry = usable[idx];
+    }
+
+    const copiedKey = logEntry.effect_key;
+    const entry = E.get(copiedKey);
+    if (!entry) throw new Error(`Эффект «${copiedKey}» больше не зарегистрирован.`);
+
+    const copiedTargetType = E.normalizeTargetType(logEntry.target_type || entry.meta.targetType || 'self');
+    let newTargets = [];
+
+    if (copiedTargetType === 'one' || copiedTargetType === 'two') {
+      const kind = logEntry.target_kind || 'player';
+      let candidates;
+      if (kind === 'property') {
+        const { data } = await db(ctx).from('room_bunker_properties').select('id,property_id,type,text').eq('room_code', roomCode(ctx));
+        candidates = data || [];
+      } else {
+        candidates = ctx.players.filter(p => p.id !== ctx.player.id && p.id !== ctx.room.host_id && p.is_alive !== false);
+      }
+      if (!window.AliveEffectsUI?.pick) throw new Error('UI выбора цели недоступен.');
+      newTargets = await window.AliveEffectsUI.pick({ text: `«Двойник» копирует эффект: ${copiedKey}` }, candidates, copiedTargetType === 'two' ? 2 : 1);
+      if (!newTargets) return false;
+    } else if (copiedTargetType === 'all') {
+      newTargets = ctx.players.filter(p => p.id !== ctx.player.id && p.id !== ctx.room.host_id && p.is_alive !== false);
+    }
+
+    const result = await entry.handler({
+      db: ctx.db, room: ctx.room, players: ctx.players, player: ctx.player,
+      card: ctx.card, targets: newTargets, targetType: copiedTargetType,
+      effectKey: copiedKey, params: logEntry.params || {}
+    });
+    if (result === false || result?.cancelled) return false;
+    if (result?.success === false) throw new Error(result.error || 'Скопированный эффект не выполнен.');
+
+    return { copiedKey };
+  }, { targetType: 'one', eventType: 'neutral', eventText: (ctx, r) => `${ctx.player.name || 'Игрок'} скопировал(а) и применил(а) чужое спецусловие «${r?.copiedKey}» этого раунда.` });
+
   E.register('narrative_effect', async ctx => {
     const ids = ctx.targets.map(t => t.id || t);
     return { targetPlayerId: ids[0] || null };
