@@ -56,16 +56,25 @@
     if (c.card.used) throw new Error('Эта карта уже использована.');
     if (c.player.is_alive === false) throw new Error('Вы выбыли и не можете использовать спецусловия.');
 
-    const type = c.card.target_type || 'self';
+    const rawType = c.card.target_type || 'self';
+    const type = window.AliveEffectEngine.normalizeTargetType(rawType);
     const kind = targetKind(c);
     let targets = [];
 
     if (type === 'one' || type === 'two') {
-      const candidates = kind === 'property'
-        ? await loadProperties(c)
-        : c.players.filter(p => p.id !== c.player.id && p.id !== c.room.host_id && p.is_alive !== false);
-      targets = await window.AliveEffectsUI.pick(c.card, candidates, type === 'two' ? 2 : 1);
-      if (!targets) return false;
+      if (rawType === 'host') {
+        // Цель — сам ведущий (эффект влияет на бункер/сценарий в целом, игрок цель не выбирает).
+        targets = [{ id: c.room.host_id, name: 'Ведущий' }];
+      } else {
+        const includeSelf = rawType === 'one_any' || rawType === 'two_any';
+        const candidates = kind === 'property'
+          ? await loadProperties(c)
+          : c.players.filter(p =>
+              (includeSelf || p.id !== c.player.id) &&
+              p.id !== c.room.host_id && p.is_alive !== false);
+        targets = await window.AliveEffectsUI.pick(c.card, candidates, type === 'two' ? 2 : 1);
+        if (!targets) return false;
+      }
     } else if (type === 'all') {
       targets = c.players.filter(p => p.id !== c.player.id && p.id !== c.room.host_id && p.is_alive !== false);
     }
