@@ -247,6 +247,37 @@
     return { changedCategory: category, targetPlayerId: target };
   }, { targetType: 'one', eventType: 'neutral', eventText: (ctx, r) => `${ctx.player.name || 'Игрок'} провёл(а) обмен вслепую (категория «${r?.changedCategory}») с выбранным игроком.` });
 
+  // Кража вслепую с ЖЁСТКО заданной категорией (без выбора) — для карт вида
+  // «забрать весь малый багаж», где категория прописана в тексте карты, а не выбирается вором.
+  E.register('steal_fixed_category_blind', async ctx => {
+    const target = targetId(ctx);
+    const category = ctx.params.category;
+    if (!category) throw new Error('Для этой карты не задана категория в effect_params.category.');
+    if (await isProtected(ctx, target, category)) {
+      throw new Error(`Категория «${category}» защищена «Бронью» и не может быть украдена.`);
+    }
+    const mine = await getOwnTrait(ctx, category);
+    if (!mine) throw new Error(`У вас нет характеристики категории «${category}».`);
+    const selected = (await playerCards(ctx, target)).find(c => c.category === category);
+    if (!selected) throw new Error(`У цели нет характеристики категории «${category}».`);
+
+    const mineSnap = { text: mine.text, value: mine.value, revealed: mine.revealed };
+    try {
+      await patchCard(ctx, mine.id, { text: selected.text, value: selected.value, revealed: mine.revealed });
+      await patchCard(ctx, selected.id, { text: '[Характеристика украдена]', value: 0, revealed: false });
+      await db(ctx).from('round_effects').insert({
+        room_code: roomCode(ctx), round: 0, effect_key: 'trait_history',
+        source_player_id: target, target_player_id: target,
+        effect_params: { category, text: selected.text, value: selected.value },
+        is_active: true
+      });
+    } catch (error) {
+      try { await patchCard(ctx, mine.id, mineSnap); } catch (_) {}
+      throw error;
+    }
+    return { targetPlayerId: target };
+  }, { targetType: 'one', eventType: 'negative', eventText: ctx => `${ctx.player.name || 'Игрок'} вслепую забрал(а) у цели категорию «${ctx.params.category}» — содержимое не разглашается.` });
+
   E.register('copy_trait', async ctx => {
     const target = targetId(ctx);
     const selected = await pickTrait(ctx, target, 'КОПИРОВАНИЕ — какую открытую характеристику скопировать?');
