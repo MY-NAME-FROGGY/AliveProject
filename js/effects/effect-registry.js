@@ -884,15 +884,61 @@
     return { category };
   }, { targetType: 'two', eventType: 'neutral', eventText: (ctx, r) => `${ctx.player.name || 'Игрок'} поменял(а) местами «${r?.category}» у двух других игроков.` });
 
-  // P05 — эффект на «ведущего»/сценарий в целом: точной числовой механики (месяцы еды) в схеме нет,
-  // поэтому фиксируем факт применения флагом (round=0) + видимым событием для ведущего.
-  E.register('host_resource_note', async ctx => {
-    await db(ctx).from('round_effects').insert({
-      room_code: roomCode(ctx), round: 0, effect_key: 'host_resource_note',
-      source_player_id: ctx.player.id, target_player_id: ctx.room.host_id,
-      effect_params: { text: ctx.card.text }, is_active: true
-    });
-  }, { targetType: 'one', eventType: 'positive', eventText: ctx => `${ctx.player.name || 'Игрок'} применил(а): «${ctx.card.text}». Ведущий учитывает эффект вручную (нет числового учёта ресурсов бункера).` });
+  // Ресурсы бункера: если у сценария задан resource_schema — учёт принудительно включён.
+  // Иначе смотрим на ручной тумблер хоста в rooms.settings.resources_enabled (по умолчанию выключен).
+  async function resourcesEnabled(ctx) {
+    const { data: scenario } = await db(ctx).from('scenarios').select('resource_schema')
+      .eq('id', ctx.room.scenario_id).maybeSingle();
+    const schema = scenario?.resource_schema || {};
+    if (Object.keys(schema).length > 0) return { enabled: true, schema, forced: true };
+    const manual = ctx.room.settings?.resources_enabled === true;
+    return { enabled: manual, schema: manual ? DEFAULT_RESOURCE_SCHEMA : {}, forced: false };
+  }
+
+  const DEFAULT_RESOURCE_SCHEMA = { food_months: { label: 'Месяцы еды', start: 6 } };
+
+  async function ensureResourceRow(ctx, key, schema) {
+    const { data: existing } = await db(ctx).from('room_resources').select('*')
+      .eq('room_code', roomCode(ctx)).eq('key', key).maybeSingle();
+    if (existing) return existing;
+    const def = schema[key] || { label: key, start: 0 };
+    const { data: created, error } = await db(ctx).from('room_resources').insert({
+      room_code: roomCode(ctx), key, label: def.label || key, amount: Number(def.start || 0)
+    }).select().single();
+    if (error) throw error;
+    return created;
+  }
+
+  // P05 и подобные — реально изменяет числовой ресурс бункера комнаты.
+  // Если учёт ресурсов выключен (нет ни схемы сценария, ни ручного тумблера хоста) —
+  // мягко откатывается к текстовой пометке, чтобы карта не ломалась в обычных играх.
+  E.register('adjust_bunker_resource', async ctx => {
+    const key = ctx.params.resource;
+    const delta = Number(ctx.params.delta || 0);
+    if (!key) throw new Error('Для этой карты не задан ресурс в effect_params.resource.');
+
+    const { enabled, schema } = await resourcesEnabled(ctx);
+    if (!enabled) {
+      await db(ctx).from('round_effects').insert({
+        room_code: roomCode(ctx), round: 0, effect_key: 'host_resource_note',
+        source_player_id: ctx.player.id, target_player_id: ctx.room.host_id,
+        effect_params: { text: ctx.card.text }, is_active: true
+      });
+      return { note: true };
+    }
+
+    const row = await ensureResourceRow(ctx, key, schema);
+    const newAmount = Number(row.amount) + delta;
+    const { error } = await db(ctx).from('room_resources').update({ amount: newAmount, updated_at: new Date().toISOString() })
+      .eq('id', row.id);
+    if (error) throw error;
+    return { label: row.label, amount: newAmount, delta };
+  }, {
+    targetType: 'one', eventType: 'positive',
+    eventText: (ctx, r) => r?.note
+      ? `${ctx.player.name || 'Игрок'} применил(а): «${ctx.card.text}». Учёт ресурсов выключен — ведущий учитывает вручную.`
+      : `${ctx.player.name || 'Игрок'} изменил(а) ресурс «${r?.label}»: ${r?.delta > 0 ? '+' : ''}${r?.delta} (сейчас: ${r?.amount}).`
+  });
 
   // P08 — «изменить биологию» цели: новая случайная карта категории bio из общей колоды.
   E.register('redraw_category', async ctx => {
