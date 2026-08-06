@@ -57,6 +57,9 @@
       if (result === false || result?.cancelled) return { success: false, cancelled: true };
       if (result?.success === false) throw new Error(result.error || 'Эффект не выполнен');
 
+      const targetIdsForLog = targets.map(t => typeof t === 'string' ? t : t?.id).filter(Boolean);
+      await logExecution(ctx, key, targetIdsForLog);
+
       // Некоторые эффекты (bunker_effect) исполняются через серверный RPC,
       // который сам помечает карту used и сам пишет game_event.
       // В этом случае клиент ничего не дублирует.
@@ -64,7 +67,7 @@
         return { success: true, effectKey: key, targetIds: [], result };
       }
 
-      const targetIds = targets.map(t => typeof t === 'string' ? t : t?.id).filter(Boolean);
+      const targetIds = targetIdsForLog;
       const { db } = ctx;
 
       const { data: marked, error: cardError } = await db
@@ -107,6 +110,23 @@
       private: false
     });
     if (error) console.error('[EffectEngine] game_events:', error);
+  }
+
+  // Общий аудит-лог всех успешно применённых спецусловий за раунд.
+  // Используется картами-репликаторами (например «Двойник»), чтобы копировать
+  // РЕАЛЬНО применённый в этом раунде эффект, а не текст карты.
+  async function logExecution(ctx, key, targetIds) {
+    const { error } = await ctx.db.from('effect_log').insert({
+      room_code: ctx.room.code,
+      round: ctx.room.current_round || 1,
+      player_id: ctx.player.id,
+      effect_key: key,
+      target_type: ctx.card.target_type || null,
+      target_kind: ctx.card.target_kind || null,
+      params: ctx.card.effect_params || {},
+      target_ids: targetIds || []
+    });
+    if (error) console.error('[EffectEngine] effect_log:', error);
   }
 
   window.AliveEffectEngine = Engine;
