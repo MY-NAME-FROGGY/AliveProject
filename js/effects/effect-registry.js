@@ -173,6 +173,80 @@
     return { changedCategory: selected.category, targetPlayerId: target };
   }, { targetType: 'one', eventType: 'neutral', eventText: (ctx, r) => `${ctx.player.name || 'Игрок'} обменял(а) характеристику «${r?.changedCategory || 'неизвестно'}» с выбранным игроком.` });
 
+  function hiddenCategories(cards) {
+    return [...new Set(cards.filter(c => c.category !== 'special_condition' && c.category !== 'goal').map(c => c.category))];
+  }
+
+  // Выбор категории вслепую — без показа текста. Именно здесь и работает блеф:
+  // цель могла соврать о содержимом, а вор/обменщик узнает правду только после применения.
+  async function pickCategoryBlind(ctx, targetPlayerId, title) {
+    const cards = await playerCards(ctx, targetPlayerId);
+    const categories = hiddenCategories(cards);
+    if (!categories.length) throw new Error('У выбранного игрока нет характеристик для этого действия.');
+    if (window.AliveEffectsUI?.pickCategory) return window.AliveEffectsUI.pickCategory(categories, title);
+    const raw = window.prompt(`${title}\n\n${categories.map((x, i) => `${i + 1}. ${x}`).join('\n')}\n\nВыбор вслепую — содержимого не увидите заранее. Введите номер:`);
+    if (raw === null) return null;
+    const idx = Number(raw) - 1;
+    if (!Number.isInteger(idx) || !categories[idx]) throw new Error('Некорректный выбор категории.');
+    return categories[idx];
+  }
+
+  // «Ограбление вслепую» — забрать характеристику по категории, не зная содержимого.
+  // Украденная карта остаётся скрытой ото всех (в т.ч. от факта кражи), кроме самого вора.
+  E.register('steal_trait_blind', async ctx => {
+    const target = targetId(ctx);
+    const category = await pickCategoryBlind(ctx, target, 'ОГРАБЛЕНИЕ ВСЛЕПУЮ — выберите категорию');
+    if (!category) return false;
+    if (await isProtected(ctx, target, category)) {
+      throw new Error(`Категория «${category}» защищена «Бронью» и не может быть украдена.`);
+    }
+    const mine = await getOwnTrait(ctx, category);
+    if (!mine) throw new Error(`У вас нет характеристики категории «${category}».`);
+    const selected = (await playerCards(ctx, target)).find(c => c.category === category);
+    if (!selected) throw new Error('У цели больше нет такой характеристики.');
+
+    const mineSnap = { text: mine.text, value: mine.value, revealed: mine.revealed };
+    try {
+      await patchCard(ctx, mine.id, { text: selected.text, value: selected.value, revealed: mine.revealed });
+      await patchCard(ctx, selected.id, { text: '[Характеристика украдена]', value: 0, revealed: false });
+      await db(ctx).from('round_effects').insert({
+        room_code: roomCode(ctx), round: 0, effect_key: 'trait_history',
+        source_player_id: target, target_player_id: target,
+        effect_params: { category, text: selected.text, value: selected.value },
+        is_active: true
+      });
+    } catch (error) {
+      try { await patchCard(ctx, mine.id, mineSnap); } catch (_) {}
+      throw error;
+    }
+    return { changedCategory: category, targetPlayerId: target };
+  }, { targetType: 'one', eventType: 'negative', eventText: (ctx, r) => `${ctx.player.name || 'Игрок'} совершил(а) ограбление вслепую (категория «${r?.changedCategory}») — содержимое не разглашается.` });
+
+  // «Обмен вслепую» — обе стороны меняются категорией не зная, что получат.
+  E.register('swap_trait_blind', async ctx => {
+    const target = targetId(ctx);
+    const category = await pickCategoryBlind(ctx, target, 'ОБМЕН ВСЛЕПУЮ — выберите категорию');
+    if (!category) return false;
+    if (await isProtected(ctx, target, category)) {
+      throw new Error(`Категория «${category}» защищена «Бронью» и не может быть обменяна.`);
+    }
+    const mine = await getOwnTrait(ctx, category);
+    if (!mine) throw new Error(`У вас нет характеристики категории «${category}».`);
+    const selected = (await playerCards(ctx, target)).find(c => c.category === category);
+    if (!selected) throw new Error('У цели больше нет такой характеристики.');
+    // revealed-статус каждой стороны остаётся как был — обмен слепой, но не меняет, кто что публично показывал.
+    const mineSnap = { text: mine.text, value: mine.value, revealed: mine.revealed };
+    const theirSnap = { text: selected.text, value: selected.value, revealed: selected.revealed };
+    try {
+      await patchCard(ctx, mine.id, { text: theirSnap.text, value: theirSnap.value, revealed: mineSnap.revealed });
+      await patchCard(ctx, selected.id, { text: mineSnap.text, value: mineSnap.value, revealed: theirSnap.revealed });
+    } catch (error) {
+      try { await patchCard(ctx, mine.id, mineSnap); } catch (_) {}
+      throw error;
+    }
+    return { changedCategory: category, targetPlayerId: target };
+  }, { targetType: 'one', eventType: 'neutral', eventText: (ctx, r) => `${ctx.player.name || 'Игрок'} провёл(а) обмен вслепую (категория «${r?.changedCategory}») с выбранным игроком.` });
+
   E.register('copy_trait', async ctx => {
     const target = targetId(ctx);
     const selected = await pickTrait(ctx, target, 'КОПИРОВАНИЕ — какую открытую характеристику скопировать?');
