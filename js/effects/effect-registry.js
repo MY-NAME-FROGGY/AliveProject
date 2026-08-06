@@ -147,6 +147,12 @@
     try {
       await patchCard(ctx, mine.id, stolenSnap);
       await patchCard(ctx, selected.id, { text: '[Характеристика украдена]', value: 0, revealed: true });
+      await db(ctx).from('round_effects').insert({
+        room_code: roomCode(ctx), round: 0, effect_key: 'trait_history',
+        source_player_id: target, target_player_id: target,
+        effect_params: { category: selected.category, text: selected.text, value: selected.value },
+        is_active: true
+      });
     } catch (error) {
       try { await patchCard(ctx, mine.id, mineSnap); } catch (_) {}
       throw error;
@@ -210,6 +216,12 @@
     if (!mine) throw new Error(`У вас нет карты категории «${category}».`);
     const theirs = await findCard(ctx, target, category);
     const snap = { text: mine.text, value: mine.value, revealed: true };
+    await db(ctx).from('round_effects').insert({
+      room_code: roomCode(ctx), round: 0, effect_key: 'trait_history',
+      source_player_id: ctx.player.id, target_player_id: ctx.player.id,
+      effect_params: { category, text: mine.text, value: mine.value },
+      is_active: true
+    });
     await patchCard(ctx, mine.id, { text: '[Передано другому игроку]', value: 0, revealed: true });
     if (theirs) await patchCard(ctx, theirs.id, snap);
     return { targetPlayerId: target, category };
@@ -488,6 +500,170 @@
   E.register('block_special_condition', async ctx => {
     await addRoundEffect(ctx, { target_player_id: targetId(ctx) });
   }, { targetType: 'one', eventType: 'negative' });
+
+  /* ---- Группа C: карты, привязанные к исходу голосования (флаги; сама логика — в resolveVoting) ---- */
+
+  E.register('open_voting', async ctx => { await addRoundEffect(ctx, { target_player_id: ctx.player.id }); },
+    { targetType: 'all', eventType: 'neutral' });
+
+  E.register('second_vote_abstain', async ctx => { await addRoundEffect(ctx, { target_player_id: ctx.player.id }); },
+    { targetType: 'self', eventType: 'positive' });
+
+  E.register('coin_flip_survival', async ctx => { await addRoundEffect(ctx, { target_player_id: ctx.player.id }); },
+    { targetType: 'self', eventType: 'positive' });
+
+  E.register('tie_breaker', async ctx => { await addRoundEffect(ctx, { target_player_id: ctx.player.id }); },
+    { targetType: 'self', eventType: 'positive' });
+
+  E.register('spy_vote', async ctx => { await addRoundEffect(ctx, { target_player_id: targetId(ctx) }); },
+    { targetType: 'one', eventType: 'neutral', eventText: () => 'Использована карта слежки — результат придёт после подсчёта голосов.' });
+
+  // «Наследство» — постоянная заявка (round=0), реализуется в resolveVoting в момент выбывания цели.
+  E.register('heir', async ctx => {
+    const target = targetId(ctx);
+    await db(ctx).from('round_effects').insert({
+      room_code: roomCode(ctx), round: 0, effect_key: 'heir',
+      source_player_id: ctx.player.id, target_player_id: target, effect_params: {}, is_active: true
+    });
+  }, { targetType: 'one', eventType: 'positive', eventText: ctx => `${ctx.player.name || 'Игрок'} заявил(а) права наследства на карты одного из игроков.` });
+
+  // «Второе дыхание» — восстановить последнюю утраченную (украденную/переданную) свою характеристику.
+  E.register('restore_lost_trait', async ctx => {
+    const { data, error } = await db(ctx).from('round_effects').select('*')
+      .eq('room_code', roomCode(ctx)).eq('effect_key', 'trait_history')
+      .eq('target_player_id', ctx.player.id).eq('is_active', true)
+      .order('id', { ascending: false }).limit(1);
+    if (error) throw error;
+    if (!data || !data.length) throw new Error('Нет утраченных характеристик для восстановления.');
+    const hist = data[0];
+    const mine = await getOwnTrait(ctx, hist.effect_params.category);
+    if (!mine) throw new Error(`У вас больше нет карты категории «${hist.effect_params.category}».`);
+    await patchCard(ctx, mine.id, { text: hist.effect_params.text, value: hist.effect_params.value, revealed: true });
+    await db(ctx).from('round_effects').update({ is_active: false }).eq('id', hist.id);
+    return { category: hist.effect_params.category };
+  }, { targetType: 'self', eventType: 'positive', eventText: (ctx, r) => `${ctx.player.name || 'Игрок'} вернул(а) себе утраченную характеристику «${r?.category}».` });
+
+  /* ---- Простые самостоятельные механики поверх player_cards ---- */
+
+  // Добровольно раскрыть свою скрытую характеристику раньше срока.
+  E.register('reveal_own_trait_early', async ctx => {
+    const mine = (await playerCards(ctx, ctx.player.id)).filter(c =>
+      c.category !== 'special_condition' && c.category !== 'goal' && c.revealed !== true);
+    if (!mine.length) throw new Error('У вас нет скрытых характеристик.');
+    const chosen = window.AliveEffectsUI?.pickTrait
+      ? await window.AliveEffectsUI.pickTrait(mine, 'Какую характеристику раскрыть раньше срока?')
+      : mine[0];
+    if (!chosen) return false;
+    await patchCard(ctx, chosen.id, { revealed: true });
+    return { category: chosen.category };
+  }, { targetType: 'self', eventType: 'neutral', eventText: (ctx, r) => `${ctx.player.name || 'Игрок'} досрочно раскрыл(а) характеристику «${r?.category}».` });
+
+  // GM-выбор реализуем случайным образом среди своих скрытых карт (кроме спецусловий/целей).
+  E.register('reveal_random_hidden', async ctx => {
+    const mine = (await playerCards(ctx, ctx.player.id)).filter(c =>
+      c.category !== 'special_condition' && c.category !== 'goal' && c.revealed !== true);
+    if (!mine.length) throw new Error('У вас нет скрытых характеристик.');
+    const chosen = mine[Math.floor(Math.random() * mine.length)];
+    await patchCard(ctx, chosen.id, { revealed: true });
+    return { category: chosen.category };
+  }, { targetType: 'self', eventType: 'neutral', eventText: (ctx, r) => `${ctx.player.name || 'Игрок'} был(а) вынужден(а) раскрыть характеристику «${r?.category}» (выбор случаен).` });
+
+  // Показать уже открытую характеристику ещё раз (приватно, тому, кто просит).
+  E.register('show_trait_again', async ctx => {
+    const target = targetId(ctx);
+    const cards = publicTraits(await playerCards(ctx, target));
+    const chosen = window.AliveEffectsUI?.pickTrait
+      ? await window.AliveEffectsUI.pickTrait(cards, 'Какую открытую характеристику показать ещё раз?')
+      : cards[0];
+    if (!chosen) return false;
+    if (typeof window !== 'undefined' && window.alert) window.alert(`${chosen.category}: ${chosen.text}`);
+    return { targetPlayerId: target };
+  }, { targetType: 'one', eventType: 'neutral' });
+
+  // «Молчание»: мут на раунд + голос за двоих.
+  E.register('mute_and_double_vote', async ctx => {
+    const until = new Date(Date.now() + 30 * 60 * 1000).toISOString(); // до конца раунда/ручного снятия ведущим
+    const { error } = await db(ctx).from('players').update({ is_muted: true }).eq('id', ctx.player.id).eq('room_code', roomCode(ctx));
+    if (error) throw error;
+    await addRoundEffect(ctx, { target_player_id: ctx.player.id, effect_params: { weight: 2 } });
+  }, { targetType: 'self', eventType: 'neutral', eventText: ctx => `${ctx.player.name || 'Игрок'} молчит в этом раунде, но его голос считается за двоих. Снять мут вручную по окончании раунда.` });
+
+  /* ---- Чат-флаги: реализация через round_effects, интеграция в чат — на стороне app.js (см. README ниже) ---- */
+
+  E.register('chat_block_neighbors', async ctx => { await addRoundEffect(ctx, { target_player_id: targetId(ctx), effect_params: { scope: 'neighbors' } }); },
+    { targetType: 'one', eventType: 'negative' });
+
+  E.register('chat_block_all', async ctx => { await addRoundEffect(ctx, { target_player_id: targetId(ctx), effect_params: { scope: 'all' } }); },
+    { targetType: 'one', eventType: 'negative' });
+
+  E.register('chat_block_self_private', async ctx => { await addRoundEffect(ctx, { target_player_id: ctx.player.id, effect_params: { scope: 'private_chat' } }); },
+    { targetType: 'self', eventType: 'negative' });
+
+  /* ---- Бункер: «Вклад» и «Диверсия» работают напрямую с room_bunker_properties —
+   * это и есть настоящие комнаты/системы бункера, которые игроки получают по ходу игры. ---- */
+
+  async function roomProperties(ctx) {
+    const { data, error } = await db(ctx).from('room_bunker_properties')
+      .select('*').eq('room_code', roomCode(ctx));
+    if (error) throw error;
+    return data || [];
+  }
+
+  // «Вклад» — досрочно открыть (внести в общий доступ) один ещё не раскрытый бонусный ресурс бункера.
+  E.register('reveal_random_bonus_property', async ctx => {
+    const props = await roomProperties(ctx);
+    const hidden = props.filter(p => p.type === 'bonus' && !p.revealed);
+    if (!hidden.length) throw new Error('Все бонусные свойства бункера уже раскрыты — вносить нечего.');
+    const pick = hidden[Math.floor(Math.random() * hidden.length)];
+    const { error } = await db(ctx).from('room_bunker_properties')
+      .update({ revealed: true, available: true }).eq('id', pick.id);
+    if (error) throw error;
+    return { text: pick.text };
+  }, { targetType: 'self', eventType: 'positive', eventText: (ctx, r) => `${ctx.player.name || 'Игрок'} внёс(ла) в общий доступ бункера: «${r?.text}».` });
+
+  // «Диверсия: тайник с едой» — безвозвратно уничтожить один уже доступный бонусный ресурс.
+  E.register('destroy_random_bonus_property', async ctx => {
+    const props = await roomProperties(ctx);
+    const available = props.filter(p => p.type === 'bonus' && p.revealed && p.available !== false);
+    if (!available.length) return { text: null };
+    const pick = available[Math.floor(Math.random() * available.length)];
+    const { error } = await db(ctx).from('room_bunker_properties')
+      .update({ available: false }).eq('id', pick.id);
+    if (error) throw error;
+    return { text: pick.text };
+  }, { targetType: 'self', eventType: 'negative', eventText: (ctx, r) => r?.text ? `${ctx.player.name || 'Игрок'} уничтожил(а) в бункере: «${r.text}» — ресурс потерян безвозвратно.` : 'В бункере не нашлось доступного ресурса для уничтожения — эффект пропал впустую.' });
+
+  // «Перестройка» — добавить в комнату случайное bonus-свойство бункера из общего каталога, которого у неё ещё нет.
+  E.register('add_random_room', async ctx => {
+    const { data: existing, error: exErr } = await db(ctx).from('room_bunker_properties').select('property_id').eq('room_code', roomCode(ctx));
+    if (exErr) throw exErr;
+    const excluded = new Set((existing || []).map(r => r.property_id));
+    const { data: pool, error: poolErr } = await db(ctx).from('bunker_properties').select('id,type,text').eq('type', 'bonus');
+    if (poolErr) throw poolErr;
+    const options = (pool || []).filter(p => !excluded.has(p.id));
+    if (!options.length) throw new Error('В каталоге не осталось новых бонусных свойств бункера.');
+    const pick = options[Math.floor(Math.random() * options.length)];
+    const { error } = await db(ctx).from('room_bunker_properties').insert({
+      room_code: roomCode(ctx), property_id: pick.id, type: pick.type, text: pick.text, available: true, revealed: false, blocked: false
+    });
+    if (error) throw error;
+    return { text: pick.text };
+  }, { targetType: 'self', eventType: 'positive', eventText: (ctx, r) => `${ctx.player.name || 'Игрок'} добавил(а) в бункер новую комнату: «${r?.text}».` });
+
+  // Пропустить фазу выставления — флаг, проверяется хелпером AliveEffects.canNominate() (см. effect-compat.js).
+  E.register('skip_nomination', async ctx => { await addRoundEffect(ctx, { target_player_id: ctx.player.id }); },
+    { targetType: 'self', eventType: 'neutral' });
+
+  // Иммунитет к одной катастрофе — просто флаг для ведущего/будущей автоматизации катастроф.
+  E.register('catastrophe_immunity', async ctx => { await addRoundEffect(ctx, { target_player_id: ctx.player.id }); },
+    { targetType: 'self', eventType: 'positive' });
+
+  /* ---- Group D: чисто нарративные/социальные карты — не проверяются кодом (честность, договорённости и т.п.),
+   * но всё равно проходят через единый движок: тратятся, логируются публично, видны в ленте событий. ---- */
+  E.register('narrative_effect', async ctx => {
+    const ids = ctx.targets.map(t => t.id || t);
+    return { targetPlayerId: ids[0] || null };
+  }, { targetType: 'self', eventType: 'neutral', eventText: ctx => `${ctx.player.name || 'Игрок'} использовал(а) спецусловие: «${ctx.card.text}».` });
 
   window.AliveEffectRegistry = { initialized: true };
 })(window);
