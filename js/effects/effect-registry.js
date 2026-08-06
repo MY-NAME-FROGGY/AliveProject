@@ -822,6 +822,108 @@
     return { copiedKey };
   }, { targetType: 'one', eventType: 'neutral', eventText: (ctx, r) => `${ctx.player.name || 'Игрок'} скопировал(а) и применил(а) чужое спецусловие «${r?.copiedKey}» этого раунда.` });
 
+  /* ---- Способности авторского сценария SC08 (preset_character_traits) ---- */
+
+  // P01 — узнать факт другого игрока, с выбором «открыто» или «скрыто» в момент применения.
+  E.register('reveal_or_peek_fact', async ctx => {
+    const target = targetId(ctx);
+    const category = ctx.params.category || 'fact1';
+    const card = (await playerCards(ctx, target)).find(c => c.category === category);
+    if (!card) throw new Error(`У цели нет карты категории «${category}».`);
+    const open = window.confirm(`Раскрыть «${category}» цели ПУБЛИЧНО (OK) или посмотреть СКРЫТО только для себя (Отмена)?`);
+    if (open) {
+      await patchCard(ctx, card.id, { revealed: true });
+    } else if (typeof window !== 'undefined' && window.alert) {
+      window.alert(`${category}: ${card.text}`);
+    }
+    return { targetPlayerId: target, open };
+  }, { targetType: 'one', eventType: 'neutral', eventText: (ctx, r) => r?.open ? `${ctx.player.name || 'Игрок'} публично раскрыл(а) факт цели.` : `${ctx.player.name || 'Игрок'} скрытно узнал(а) факт цели.` });
+
+  // P03 — украсть багаж (игрок выбирает большой/малый), не глядя на условие «раскрыто ли».
+  E.register('steal_luggage_choice', async ctx => {
+    const target = targetId(ctx);
+    const targetCards = (await playerCards(ctx, target)).filter(c => c.category === 'luggage_big' || c.category === 'luggage_small');
+    if (!targetCards.length) throw new Error('У цели нет карт багажа.');
+    const chosen = window.AliveEffectsUI?.pickTrait
+      ? await window.AliveEffectsUI.pickTrait(targetCards, 'Какой багаж украсть?')
+      : targetCards[0];
+    if (!chosen) return false;
+    if (await isProtected(ctx, target, chosen.category)) {
+      throw new Error(`Категория «${chosen.category}» защищена «Бронью» и не может быть украдена.`);
+    }
+    const mine = await getOwnTrait(ctx, chosen.category);
+    if (!mine) throw new Error(`У вас нет карты категории «${chosen.category}».`);
+    const mineSnap = { text: mine.text, value: mine.value, revealed: mine.revealed };
+    try {
+      await patchCard(ctx, mine.id, { text: chosen.text, value: chosen.value, revealed: true });
+      await patchCard(ctx, chosen.id, { text: '[Багаж украден]', value: 0, revealed: true });
+      await db(ctx).from('round_effects').insert({
+        room_code: roomCode(ctx), round: 0, effect_key: 'trait_history',
+        source_player_id: target, target_player_id: target,
+        effect_params: { category: chosen.category, text: chosen.text, value: chosen.value }, is_active: true
+      });
+    } catch (error) {
+      try { await patchCard(ctx, mine.id, mineSnap); } catch (_) {}
+      throw error;
+    }
+    return { category: chosen.category, targetPlayerId: target };
+  }, { targetType: 'one', eventType: 'negative', eventText: (ctx, r) => `${ctx.player.name || 'Игрок'} украл(а) багаж («${r?.category}») у выбранного игрока.` });
+
+  // P04 — поменять местами факт (fact1 или fact2, на выбор) у двух ДРУГИХ игроков.
+  E.register('swap_fact_between_others', async ctx => {
+    const [a, b] = ctx.targets.map(t => t.id || t);
+    const options = ['fact1', 'fact2'];
+    const raw = window.prompt(`Какой факт поменять местами?\n1. Факт 1\n2. Факт 2\n\nВведите номер:`);
+    const idx = Number(raw) - 1;
+    if (!Number.isInteger(idx) || !options[idx]) return false;
+    const category = options[idx];
+    const cardA = await findCard(ctx, a, category);
+    const cardB = await findCard(ctx, b, category);
+    if (!cardA || !cardB) throw new Error(`У одного из выбранных игроков нет карты категории «${category}».`);
+    await swapSnapshots(ctx, cardA, cardB);
+    return { category };
+  }, { targetType: 'two', eventType: 'neutral', eventText: (ctx, r) => `${ctx.player.name || 'Игрок'} поменял(а) местами «${r?.category}» у двух других игроков.` });
+
+  // P05 — эффект на «ведущего»/сценарий в целом: точной числовой механики (месяцы еды) в схеме нет,
+  // поэтому фиксируем факт применения флагом (round=0) + видимым событием для ведущего.
+  E.register('host_resource_note', async ctx => {
+    await db(ctx).from('round_effects').insert({
+      room_code: roomCode(ctx), round: 0, effect_key: 'host_resource_note',
+      source_player_id: ctx.player.id, target_player_id: ctx.room.host_id,
+      effect_params: { text: ctx.card.text }, is_active: true
+    });
+  }, { targetType: 'one', eventType: 'positive', eventText: ctx => `${ctx.player.name || 'Игрок'} применил(а): «${ctx.card.text}». Ведущий учитывает эффект вручную (нет числового учёта ресурсов бункера).` });
+
+  // P08 — «изменить биологию» цели: новая случайная карта категории bio из общей колоды.
+  E.register('redraw_category', async ctx => {
+    const target = targetId(ctx);
+    const category = ctx.params.category || 'bio';
+    const card = await findCard(ctx, target, category);
+    if (!card) throw new Error(`У цели нет карты категории «${category}».`);
+    const draw = await drawFromPool(ctx, category);
+    await patchCard(ctx, card.id, { text: draw.text, value: draw.value, pool_id: draw.id });
+    return { targetPlayerId: target, category };
+  }, { targetType: 'one', eventType: 'neutral', eventText: (ctx, r) => `${ctx.player.name || 'Игрок'} изменил(а) характеристику «${r?.category}» у выбранного игрока.` });
+
+  // P09 — узнать Цель другого игрока (peek_trait не годится, т.к. явно исключает category='goal').
+  E.register('peek_goal', async ctx => {
+    const target = targetId(ctx);
+    const card = await findCard(ctx, target, 'goal');
+    if (!card) throw new Error('У цели нет карты цели.');
+    if (typeof window !== 'undefined' && window.alert) window.alert(`Цель игрока: ${card.text}`);
+    return { targetPlayerId: target };
+  }, { targetType: 'one', eventType: 'neutral', eventText: () => 'Использована карта разведки цели другого игрока.' });
+
+  // P10 — голос цели аннулируется, а свой голос считается за двоих (комбо двух уже готовых эффектов).
+  E.register('nullify_and_double_vote', async ctx => {
+    const target = targetId(ctx);
+    await db(ctx).from('round_effects').insert([
+      { room_code: roomCode(ctx), round: round(ctx), effect_key: 'vote_nullified', source_player_id: ctx.player.id, target_player_id: target, effect_params: {}, is_active: true },
+      { room_code: roomCode(ctx), round: round(ctx), effect_key: 'vote_weight', source_player_id: ctx.player.id, target_player_id: ctx.player.id, effect_params: { weight: 2 }, is_active: true }
+    ]);
+    return { targetPlayerId: target };
+  }, { targetType: 'one', eventType: 'negative', eventText: ctx => `${ctx.player.name || 'Игрок'} аннулировал(а) голос цели и удвоил(а) свой голос на этом голосовании.` });
+
   E.register('narrative_effect', async ctx => {
     const ids = ctx.targets.map(t => t.id || t);
     return { targetPlayerId: ids[0] || null };
