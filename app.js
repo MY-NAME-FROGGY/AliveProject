@@ -794,6 +794,57 @@ function renderLobby() {
     updateLobbyDynamic();
 }
 
+function resourceUnitLabel(unit) {
+    return unit === 'months' ? 'мес.' : unit === 'days' ? 'дн.' : 'да/нет';
+}
+
+function defaultResourceItems() {
+    return {
+        food: { label: 'Еда', unit: 'months', start: 6, enabled: false },
+        water: { label: 'Вода', unit: 'months', start: 6, enabled: false },
+        electricity: { label: 'Электричество', unit: 'yesno', start: 1, enabled: false },
+        medicine: { label: 'Медикаменты', unit: 'days', start: 30, enabled: false }
+    };
+}
+
+function renderResourceRow(key, item) {
+    const unitOptions = [
+        ['months', 'Месяцы'], ['days', 'Дни'], ['yesno', 'Да/Нет']
+    ].map(([v, label]) => `<option value="${v}" ${item.unit === v ? 'selected' : ''}>${label}</option>`).join('');
+
+    const valueField = item.unit === 'yesno'
+        ? `<select id="resVal_${key}" style="width:100%;"><option value="1" ${item.start ? 'selected' : ''}>Да</option><option value="0" ${!item.start ? 'selected' : ''}>Нет</option></select>`
+        : `<input type="number" min="0" id="resVal_${key}" value="${item.start ?? 0}">`;
+
+    return `
+        <div class="resource-row" style="display:grid; grid-template-columns:auto 1fr 110px 90px; gap:8px; align-items:center; margin-bottom:6px;">
+            <input type="checkbox" id="resEnabled_${key}" style="width:auto;" ${item.enabled ? 'checked' : ''}>
+            <input type="text" id="resLabel_${key}" value="${item.label}" placeholder="Название ресурса">
+            <select id="resUnit_${key}">${unitOptions}</select>
+            <div>${valueField}</div>
+        </div>`;
+}
+
+function renderResourceSettings(s) {
+    const items = Object.assign(defaultResourceItems(), (s.resources && s.resources.items) || {});
+    const rowsHtml = Object.entries(items).map(([key, item]) => renderResourceRow(key, item)).join('');
+    return `
+        <h3 style="margin-top:14px;">Ресурсы бункера (доп. сложность)</h3>
+        <p class="muted-note">Отметьте нужные ресурсы, задайте единицу и стартовый запас. Если у выбранного сценария задан свой набор ресурсов — он используется принудительно, этот блок игнорируется.</p>
+        <div id="resourceRows">${rowsHtml}</div>
+        <button type="button" class="btn btn-ghost btn-sm" style="margin-top:4px;" onclick="addCustomResourceRow()">+ Свой ресурс</button>
+    `;
+}
+
+let customResourceCounter = 0;
+function addCustomResourceRow() {
+    customResourceCounter++;
+    const key = 'custom_' + Date.now() + '_' + customResourceCounter;
+    const container = document.getElementById('resourceRows');
+    if (!container) return;
+    container.insertAdjacentHTML('beforeend', renderResourceRow(key, { label: '', unit: 'months', start: 0, enabled: true }));
+}
+
 function renderSettingsEditable(s) {
     return `
         <div class="settings-grid">
@@ -812,6 +863,7 @@ function renderSettingsEditable(s) {
         <h3 style="margin-top:14px;">Характеристики по раундам</h3>
         <p class="muted-note">На каждый раунд — сколько характеристик можно открыть и какого типа каждая (любая или конкретная категория).</p>
         <div id="roundBlocksContainer"></div>
+        ${renderResourceSettings(s)}
         <button class="btn btn-primary btn-sm" style="margin-top:10px;" onclick="actionSaveSettings()">Сохранить настройки</button>
     `;
 }
@@ -822,12 +874,18 @@ function renderSettingsReadonly(s) {
         return `Раунд ${i + 1}: ${labels.length} (${labels.join(', ')})`;
     }).join(' · ');
 
+    const activeResources = Object.values((s.resources && s.resources.items) || {}).filter(r => r.enabled);
+    const resourcesSummary = activeResources.length
+        ? activeResources.map(r => `${r.label}: ${r.unit === 'yesno' ? (r.start ? 'да' : 'нет') : r.start + ' ' + resourceUnitLabel(r.unit)}`).join(' · ')
+        : 'не заданы';
+
     return `<div class="readonly-settings">
         Игроков: ${s.min_players ?? '?'}–${s.max_players ?? '?'} · Нужно выживших: ${s.target_survivors ?? '?'}<br>
         Раундов: ${s.rounds ?? '?'}<br>
         ${roundSummary ? '<div class="muted-note">' + roundSummary + '</div>' : ''}
         Фазы: открытие ${s.phase_seconds?.reveal ?? '?'}с · обсуждение ${s.phase_seconds?.discussion ?? '?'}с · оправдание ${s.phase_seconds?.defense ?? '?'}с · голосование ${s.phase_seconds?.voting ?? '?'}с<br>
-        Личные чаты: ${s.private_chat_enabled ? 'включены' : 'выключены'}
+        Личные чаты: ${s.private_chat_enabled ? 'включены' : 'выключены'}<br>
+        Ресурсы бункера: ${resourcesSummary}
     </div>`;
 }
 
@@ -2290,6 +2348,27 @@ async function actionSaveSettings() {
         roundReveals.push(slots);
     }
 
+    const resourceRowsEl = document.getElementById('resourceRows');
+    const resourceItems = {};
+    if (resourceRowsEl) {
+        resourceRowsEl.querySelectorAll('.resource-row').forEach(row => {
+            const checkbox = row.querySelector('input[type="checkbox"]');
+            if (!checkbox) return;
+            const key = checkbox.id.replace('resEnabled_', '');
+            const labelEl = document.getElementById('resLabel_' + key);
+            const unitEl = document.getElementById('resUnit_' + key);
+            const valEl = document.getElementById('resVal_' + key);
+            const label = (labelEl?.value || '').trim();
+            if (!label) return; // пустое название — пропускаем строку (например, пустой «свой ресурс»)
+            resourceItems[key] = {
+                label,
+                unit: unitEl?.value || 'months',
+                start: Number(valEl?.value || 0),
+                enabled: checkbox.checked
+            };
+        });
+    }
+
     const settings = {
         min_players: parseInt(document.getElementById('setMin').value) || 1,
         max_players: parseInt(document.getElementById('setMax').value) || 20,
@@ -2302,11 +2381,30 @@ async function actionSaveSettings() {
             defense: parseInt(document.getElementById('setDefense').value) || 30,
             voting: parseInt(document.getElementById('setVoting').value) || 60
         },
-        private_chat_enabled: document.getElementById('setPrivateChat').checked
+        private_chat_enabled: document.getElementById('setPrivateChat').checked,
+        resources: {
+            enabled: Object.values(resourceItems).some(r => r.enabled),
+            items: resourceItems
+        }
     };
 
     await dbUpdateRoom(state.currentRoomCode, { settings });
+    await syncRoomResources(state.currentRoomCode, resourceItems);
     alert('Настройки сохранены');
+}
+
+// Заранее создаёт/обновляет строки в room_resources для включённых ресурсов,
+// чтобы они были видны и готовы сразу, а не только при первом использовании карты.
+// Если у сценария задан свой resource_schema — он всё равно имеет приоритет в effect-registry.js,
+// эта синхронизация лишь готовит значения из ручных настроек хоста.
+async function syncRoomResources(roomCode, items) {
+    const enabledEntries = Object.entries(items).filter(([, item]) => item.enabled);
+    if (!enabledEntries.length) return;
+    const rows = enabledEntries.map(([key, item]) => ({
+        room_code: roomCode, key, label: item.label, amount: Number(item.start || 0)
+    }));
+    const { error } = await supabaseClient.from('room_resources').upsert(rows, { onConflict: 'room_code,key' });
+    if (error) console.error('[syncRoomResources]', error);
 }
 
 async function actionKick(targetId, targetName) {
