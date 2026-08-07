@@ -975,6 +975,148 @@
     return { targetPlayerId: target };
   }, { targetType: 'one', eventType: 'negative', eventText: ctx => `${ctx.player.name || 'Игрок'} аннулировал(а) голос цели и удвоил(а) свой голос на этом голосовании.` });
 
+  /* ---- Реальная очередь хода в фазе открытия — вместо нарратива ---- */
+
+  async function currentRevealOrderIds(ctx, forRound) {
+    const base = ctx.players.filter(p => p.id !== ctx.room.host_id).map(p => p.id);
+    const override = ctx.room.reveal_order_override;
+    if (override && override.round === forRound && Array.isArray(override.order)) {
+      const ordered = override.order.filter(id => base.includes(id));
+      const rest = base.filter(id => !override.order.includes(id));
+      return [...ordered, ...rest];
+    }
+    return base;
+  }
+
+  async function setRevealOrderOverride(ctx, forRound, order) {
+    const { error } = await db(ctx).from('rooms').update({ reveal_order_override: { round: forRound, order } }).eq('code', roomCode(ctx));
+    if (error) throw error;
+  }
+
+  // 1632 — в СЛЕДУЮЩЕМ раунде открывает характеристику последним.
+  E.register('move_to_last_next_round', async ctx => {
+    const targetRound = round(ctx) + 1;
+    const order = await currentRevealOrderIds(ctx, targetRound);
+    const without = order.filter(id => id !== ctx.player.id);
+    await setRevealOrderOverride(ctx, targetRound, [...without, ctx.player.id]);
+  }, { targetType: 'self', eventType: 'neutral', eventText: ctx => `${ctx.player.name || 'Игрок'} будет открывать характеристику последним(ей) в следующем раунде.` });
+
+  // 1675 — поменяться очередью хода с выбранным игроком (в текущей фазе открытия).
+  E.register('swap_reveal_order', async ctx => {
+    const target = targetId(ctx);
+    const r = round(ctx);
+    const order = await currentRevealOrderIds(ctx, r);
+    const i1 = order.indexOf(ctx.player.id);
+    const i2 = order.indexOf(target);
+    if (i1 === -1 || i2 === -1) throw new Error('Не удалось определить текущую очередь хода.');
+    [order[i1], order[i2]] = [order[i2], order[i1]];
+    await setRevealOrderOverride(ctx, r, order);
+    return { targetPlayerId: target };
+  }, { targetType: 'one', eventType: 'neutral', eventText: ctx => `${ctx.player.name || 'Игрок'} поменялся(ась) очередью хода с выбранным игроком.` });
+
+  // 1706 — передать право хода: выбранный игрок открывает следующим сразу после текущего активного.
+  E.register('pass_turn_to_next', async ctx => {
+    const target = targetId(ctx);
+    const r = round(ctx);
+    const order = await currentRevealOrderIds(ctx, r);
+    const activeIdx = ctx.room.reveal_index || 0;
+    const without = order.filter(id => id !== target);
+    without.splice(activeIdx + 1, 0, target);
+    await setRevealOrderOverride(ctx, r, without);
+    return { targetPlayerId: target };
+  }, { targetType: 'one', eventType: 'neutral', eventText: ctx => `${ctx.player.name || 'Игрок'} передал(а) право хода — следующим откроет выбранный игрок.` });
+
+  // 1673 — реально поменяться местами за столом (players.seat_number существует и отображается в UI).
+  E.register('swap_seats', async ctx => {
+    const target = targetId(ctx);
+    const me = ctx.players.find(p => p.id === ctx.player.id);
+    const other = ctx.players.find(p => p.id === target);
+    if (!me || !other) throw new Error('Не удалось найти игроков для обмена местами.');
+    const { error: e1 } = await db(ctx).from('players').update({ seat_number: other.seat_number }).eq('id', me.id);
+    const { error: e2 } = await db(ctx).from('players').update({ seat_number: me.seat_number }).eq('id', other.id);
+    if (e1 || e2) throw (e1 || e2);
+    return { targetPlayerId: target };
+  }, { targetType: 'one', eventType: 'neutral', eventText: ctx => `${ctx.player.name || 'Игрок'} поменялся(ась) местами за столом с выбранным игроком.` });
+
+  // 1618 «Катастрофа» — усугубляет внешнюю угрозу: реально уменьшает случайный включённый ресурс бункера.
+  // Если учёт ресурсов выключен — честно откатывается к текстовой пометке (как adjust_bunker_resource).
+  E.register('worsen_random_resource', async ctx => {
+    const { enabled, schema } = await resourcesEnabled(ctx);
+    if (!enabled || !Object.keys(schema).length) {
+      await db(ctx).from('round_effects').insert({
+        room_code: roomCode(ctx), round: 0, effect_key: 'host_resource_note',
+        source_player_id: ctx.player.id, target_player_id: ctx.room.host_id,
+        effect_params: { text: ctx.card.text }, is_active: true
+      });
+      return { note: true };
+    }
+    const keys = Object.keys(schema);
+    const key = keys[Math.floor(Math.random() * keys.length)];
+    const row = await ensureResourceRow(ctx, key, schema);
+    const amount = row.unit === 'yesno' ? 0 : Math.max(0, Number(row.amount) - (Number(ctx.params.amount) || 1));
+    const { error } = await db(ctx).from('room_resources').update({ amount, updated_at: new Date().toISOString() }).eq('id', row.id);
+    if (error) throw error;
+    return { label: row.label, amount };
+  }, {
+    targetType: 'self', eventType: 'negative',
+    eventText: (ctx, r) => r?.note
+      ? `${ctx.player.name || 'Игрок'} применил(а): «${ctx.card.text}». Учёт ресурсов выключен — ведущий учитывает вручную.`
+      : `Катастрофа усугубилась: ресурс «${r?.label}» сократился (сейчас: ${r?.amount}).`
+  });
+
+  // 1640 «Голос доверия» — автоматически прощает одно нарушение: постоянный флаг-иммунитет
+  // к следующему негативному факту (интеграция с фактами/нарушениями — по вашему усмотрению на стороне хоста).
+  E.register('pardon_flag', async ctx => {
+    await db(ctx).from('round_effects').insert({
+      room_code: roomCode(ctx), round: 0, effect_key: 'pardon_flag',
+      source_player_id: ctx.player.id, target_player_id: ctx.player.id, effect_params: {}, is_active: true
+    });
+  }, { targetType: 'self', eventType: 'positive', eventText: ctx => `${ctx.player.name || 'Игрок'} получил(а) прощение одного будущего нарушения («Голос доверия»).` });
+
+  // 1686 — пропустить оправдательную речь без штрафа: реальный флаг, если фаза защиты его проверяет.
+  E.register('skip_defense_penalty', async ctx => {
+    await addRoundEffect(ctx, { target_player_id: ctx.player.id });
+  }, { targetType: 'self', eventType: 'neutral', eventText: ctx => `${ctx.player.name || 'Игрок'} пропускает оправдательную речь без штрафа в этом раунде.` });
+
+  // 1710 — иммунитет к одному мьюту/таймауту от ведущего: постоянный флаг.
+  E.register('timeout_immune', async ctx => {
+    await db(ctx).from('round_effects').insert({
+      room_code: roomCode(ctx), round: 0, effect_key: 'timeout_immune',
+      source_player_id: ctx.player.id, target_player_id: ctx.player.id, effect_params: {}, is_active: true
+    });
+  }, { targetType: 'self', eventType: 'positive', eventText: ctx => `${ctx.player.name || 'Игрок'} получил(а) один иммунитет к муту/таймауту от ведущего.` });
+
+  // 1629 — сокращение времени следующей оправдательной речи: флаг на следующий раунд.
+  E.register('defense_time_adjust', async ctx => {
+    const targetRound = round(ctx) + 1;
+    await db(ctx).from('round_effects').insert({
+      room_code: roomCode(ctx), round: targetRound, effect_key: 'defense_time_adjust',
+      source_player_id: ctx.player.id, target_player_id: ctx.player.id,
+      effect_params: { seconds: Number(ctx.params.seconds || -15) }, is_active: true
+    });
+  }, { targetType: 'self', eventType: 'neutral', eventText: ctx => `${ctx.player.name || 'Игрок'} в следующем раунде говорит на ${Math.abs(Number(ctx.params.seconds || 15))} сек меньше в оправдательной речи.` });
+
+  // 1631 — в следующем раунде категорию раскрытия выбирает не игрок, а «ведущий» (эмулируем случайным выбором).
+  E.register('forced_reveal_category_next_round', async ctx => {
+    const targetRound = round(ctx) + 1;
+    const mine = (await playerCards(ctx, ctx.player.id)).filter(c =>
+      c.category !== 'special_condition' && c.category !== 'goal' && c.revealed !== true);
+    const categories = [...new Set(mine.map(c => c.category))];
+    if (!categories.length) throw new Error('У вас не осталось скрытых категорий для этого эффекта.');
+    const chosen = categories[Math.floor(Math.random() * categories.length)];
+    await db(ctx).from('round_effects').insert({
+      room_code: roomCode(ctx), round: targetRound, effect_key: 'forced_reveal_category',
+      source_player_id: ctx.player.id, target_player_id: ctx.player.id,
+      effect_params: { category: chosen }, is_active: true
+    });
+    return { category: chosen };
+  }, { targetType: 'self', eventType: 'neutral', eventText: (ctx, r) => `${ctx.player.name || 'Игрок'} в следующем раунде обязан(а) открыть категорию «${r?.category}» (выбор случаен, как решение ведущего).` });
+
+  // 1671 — оставить бонусное свойство бункера закрытым дольше обычного: флаг для проверки при раскрытии.
+  E.register('delay_bonus_reveal', async ctx => {
+    await addRoundEffect(ctx, { target_player_id: ctx.player.id });
+  }, { targetType: 'self', eventType: 'neutral', eventText: ctx => `${ctx.player.name || 'Игрок'} запросил(а) задержку раскрытия бонусного свойства бункера.` });
+
   E.register('narrative_effect', async ctx => {
     const ids = ctx.targets.map(t => t.id || t);
     return { targetPlayerId: ids[0] || null };
