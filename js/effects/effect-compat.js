@@ -7,7 +7,10 @@
 
   const URL = 'https://dhuqvintfsmbigmvdvak.supabase.co';
   const KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRodXF2aW50ZnNtYmlnbXZkdmFrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMwODAxODQsImV4cCI6MjA5ODY1NjE4NH0.badg8idLoAL-Y4sxR7zj9NTHdyKrBdh_Cv90fimAD-4';
-  const db = window.supabase.createClient(URL, KEY);
+  // app.js объявляет supabaseClient через `let` на верхнем уровне — это НЕ становится
+  // window.supabaseClient, но доступно как обычный идентификатор в общей глобальной
+  // лексической области последующих <script>-тегов той же страницы.
+  const db = (typeof supabaseClient !== 'undefined' && supabaseClient) || window.supabase.createClient(URL, KEY);
 
   const id = () => localStorage.getItem('playerId');
   const roomCode = () => localStorage.getItem('currentRoomCode');
