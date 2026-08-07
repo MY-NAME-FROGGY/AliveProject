@@ -126,7 +126,7 @@
 
   E.register('block_luggage', async ctx => {
     await addRoundEffect(ctx, {
-      target_player_id: targetId(ctx),
+      target_player_id: targetId(ctx) || ctx.player.id,
       effect_params: { categories: ['luggage_big', 'luggage_small'], duration: 'round' }
     });
   }, { targetType: 'one', eventType: 'negative' });
