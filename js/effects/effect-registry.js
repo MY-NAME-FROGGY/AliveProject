@@ -884,18 +884,23 @@
     return { category };
   }, { targetType: 'two', eventType: 'neutral', eventText: (ctx, r) => `${ctx.player.name || 'Игрок'} поменял(а) местами «${r?.category}» у двух других игроков.` });
 
-  // Ресурсы бункера: если у сценария задан resource_schema — учёт принудительно включён.
-  // Иначе смотрим на ручной тумблер хоста в rooms.settings.resources_enabled (по умолчанию выключен).
+  // Ресурсы бункера: если у сценария задан resource_schema — учёт принудительно включён,
+  // хост не может выключить (см. renderResourceSettings в app.js — там это тоже отражено текстом).
+  // Иначе берём то, что хост сам настроил на экране «Настройки игры» (room.settings.resources.items).
   async function resourcesEnabled(ctx) {
     const { data: scenario } = await db(ctx).from('scenarios').select('resource_schema')
       .eq('id', ctx.room.scenario_id).maybeSingle();
-    const schema = scenario?.resource_schema || {};
-    if (Object.keys(schema).length > 0) return { enabled: true, schema, forced: true };
-    const manual = ctx.room.settings?.resources_enabled === true;
-    return { enabled: manual, schema: manual ? DEFAULT_RESOURCE_SCHEMA : {}, forced: false };
-  }
+    const forcedSchema = scenario?.resource_schema || {};
+    if (Object.keys(forcedSchema).length > 0) return { enabled: true, schema: forcedSchema, forced: true };
 
-  const DEFAULT_RESOURCE_SCHEMA = { food_months: { label: 'Месяцы еды', start: 6 } };
+    const items = ctx.room.settings?.resources?.items || {};
+    const manualSchema = {};
+    for (const [key, item] of Object.entries(items)) {
+      if (item?.enabled) manualSchema[key] = { label: item.label || key, start: Number(item.start || 0) };
+    }
+    const enabled = Object.keys(manualSchema).length > 0;
+    return { enabled, schema: manualSchema, forced: false };
+  }
 
   async function ensureResourceRow(ctx, key, schema) {
     const { data: existing } = await db(ctx).from('room_resources').select('*')
