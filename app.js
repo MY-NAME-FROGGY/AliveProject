@@ -1175,6 +1175,21 @@ function backToLobby() {
 // ==========================================
 // ЗАГРУЗКА ОТКРЫТЫХ ХАРАКТЕРИСТИК
 // ==========================================
+// Порядок открытия характеристик. По умолчанию — порядок игроков как пришли (без ведущего).
+// Если карта спецусловия сохранила переопределение на этот раунд (rooms.reveal_order_override),
+// используем его — так реально работают «Обмен очередью хода», «Открывает последним» и т.п.
+function getRevealOrder(room, players) {
+    const base = players.filter(p => p.id !== room.host_id);
+    const override = room.reveal_order_override;
+    if (override && override.round === (room.current_round || 1) && Array.isArray(override.order)) {
+        const byId = new Map(base.map(p => [p.id, p]));
+        const ordered = override.order.map(id => byId.get(id)).filter(Boolean);
+        const rest = base.filter(p => !override.order.includes(p.id));
+        return [...ordered, ...rest];
+    }
+    return base;
+}
+
 async function fetchRevealedTraits() {
     const { data, error } = await supabaseClient.from('player_cards')
         .select('player_id, category, text')
@@ -1214,7 +1229,7 @@ function renderGameTable() {
     let phaseBody = '';
 
     if (room.current_phase === 'reveal') {
-        const revealOrder = state.players.filter(p => p.id !== room.host_id);
+        const revealOrder = getRevealOrder(room, state.players);
         const revealIdx = room.reveal_index || 0;
         const active = revealOrder[revealIdx];
         const isMyTurn = active && active.id === state.playerId;
@@ -1453,7 +1468,7 @@ async function updateGameDynamic() {
     const nominees = room.nominees || [];
     const defenseIdx = room.defense_index || 0;
     const revealIdx = room.reveal_index || 0;
-    const revealOrder = state.players.filter(p => p.id !== room.host_id);
+    const revealOrder = getRevealOrder(room, state.players);
     const revealActiveId = (revealOrder[revealIdx] || {}).id;
 
     const nominations = room.nominations || {};
@@ -1674,7 +1689,7 @@ async function loadMyCard() {
     }
     const note = await dbFetchNote(state.currentRoomCode, state.playerId);
 
-    const revealOrder = state.players.filter(p => p.id !== room.host_id);
+    const revealOrder = getRevealOrder(room, state.players);
     const isMyRevealTurn = room.current_phase === 'reveal' && (revealOrder[room.reveal_index || 0] || {}).id === state.playerId;
     const amEliminated = (state.players.find(p => p.id === state.playerId) || {}).is_alive === false;
 
@@ -1877,7 +1892,7 @@ async function actionRevealTrait(cardId) {
 
     if (room.current_phase !== 'reveal') return alert('Открытие характеристик доступно только в фазе «Открытие раунда».');
 
-    const revealOrder = state.players.filter(p => p.id !== room.host_id);
+    const revealOrder = getRevealOrder(room, state.players);
     const active = revealOrder[room.reveal_index || 0];
     if (!active || active.id !== state.playerId) return alert('Сейчас не ваш ход.');
 
@@ -2067,7 +2082,7 @@ async function hostAdvancePhase() {
     const nominees = room.nominees || [];
     const defenseIdx = room.defense_index || 0;
     const revealIdx = room.reveal_index || 0;
-    const revealOrder = state.players.filter(p => p.id !== room.host_id);
+    const revealOrder = getRevealOrder(room, state.players);
 
     if (phase === 'reveal' && revealIdx < revealOrder.length - 1) {
         const seconds = phaseDuration('reveal');
