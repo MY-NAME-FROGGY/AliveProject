@@ -1290,6 +1290,7 @@ function renderGameTable() {
                         ${isHost ? `<button class="btn btn-ghost btn-sm" onclick="actionRevealBonus()">Открыть доп. свойство</button>` : ''}
                     </div>
                     <div id="bunkerRevealedList"></div>
+                    <div id="bunkerResourcesList" style="margin-top:10px;"></div>
                 </div>
                 <div class="panel">
                     <h2>Хроника событий</h2>
@@ -1537,6 +1538,7 @@ async function updateGameDynamic() {
     if (scenPanel) scenPanel.style.display = room.scenario_visible ? 'block' : 'none';
 
     refreshBunkerList();
+    refreshBunkerResources();
     refreshEventsFeed();
     refreshGameChat();
     syncGamePhaseTimerTicker();
@@ -1633,6 +1635,7 @@ async function actionQuickEvent(kind) {
             'Пока шло обсуждение, один из выживших обнаружил в дальнем углу бункера ещё один тайник — досрочно открыто дополнительное свойство бункера.', null, false);
         state.room.revealed_bonus_ids = [...revealed, pick];
         refreshBunkerList();
+    refreshBunkerResources();
     } else if (kind === 'incident') {
         if (alivePlayers.length === 0) return;
         const victim = alivePlayers[Math.floor(Math.random() * alivePlayers.length)];
@@ -1930,6 +1933,7 @@ async function loadScenarioPanelGame() {
     renderScenarioPanelGameContent();
     await refreshRoomBunkerProperties();
     refreshBunkerList();
+    refreshBunkerResources();
     if (isHost) refreshHostNotesPanel();
 }
 
@@ -1975,6 +1979,31 @@ function renderScenarioPanelGameContent() {
             <h4 style="margin-top:10px;">Открытые доп. свойства</h4>
             <ul class="prop-list">${revealedBonus.map(p => `<li class="bonus"><span class="prop-tag">Бонус</span>${escapeHtml(p.text)}</li>`).join('')}</ul>
         ` : ''}
+    `;
+}
+
+async function refreshBunkerResources() {
+    const el = document.getElementById('bunkerResourcesList');
+    if (!el) return;
+    const room = state.room;
+    if (!room?.code && !state.currentRoomCode) { el.innerHTML = ''; return; }
+
+    const { data, error } = await supabaseClient.from('room_resources')
+        .select('*').eq('room_code', state.currentRoomCode).order('key');
+    if (error) { console.error('[refreshBunkerResources]', error); return; }
+
+    if (!data || !data.length) { el.innerHTML = ''; return; }
+
+    el.innerHTML = `
+        <div class="muted-note" style="font-size:11px; text-transform:uppercase; margin-bottom:4px;">Ресурсы</div>
+        <ul style="list-style:none;">
+            ${data.map(r => {
+                const low = Number(r.amount) <= 0;
+                return `<li style="display:flex; justify-content:space-between; padding:4px 0; ${low ? 'color:var(--danger);' : ''}">
+                    <span>${escapeHtml(r.label)}</span><strong>${escapeHtml(String(r.amount))}</strong>
+                </li>`;
+            }).join('')}
+        </ul>
     `;
 }
 
