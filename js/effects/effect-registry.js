@@ -674,16 +674,23 @@
   }, { targetType: 'self', eventType: 'neutral', eventText: (ctx, r) => `${ctx.player.name || 'Игрок'} был(а) вынужден(а) раскрыть характеристику «${r?.category}» (выбор случаен).` });
 
   // Показать уже открытую характеристику ещё раз (приватно, тому, кто просит).
+  // 1679 — открытые характеристики и так ВСЕГДА видны всем в панели игрока, поэтому
+  // «попросить показать ещё раз» приватным алертом не имело смысла (эффекта не было).
+  // Реальная польза — публично привлечь внимание к конкретному факту прямо в разгар
+  // обсуждения через ленту событий.
   E.register('show_trait_again', async ctx => {
     const target = targetId(ctx);
     const cards = publicTraits(await playerCards(ctx, target));
+    if (!cards.length) throw new Error('У цели нет открытых характеристик.');
     const chosen = window.AliveEffectsUI?.pickTrait
-      ? await window.AliveEffectsUI.pickTrait(cards, 'Какую открытую характеристику показать ещё раз?')
+      ? await window.AliveEffectsUI.pickTrait(cards, 'Какую открытую характеристику напомнить всем?')
       : cards[0];
     if (!chosen) return false;
-    if (typeof window !== 'undefined' && window.alert) window.alert(`${chosen.category}: ${chosen.text}`);
-    return { targetPlayerId: target };
-  }, { targetType: 'one', eventType: 'neutral' });
+    return { targetPlayerId: target, category: chosen.category, text: chosen.text };
+  }, {
+    targetType: 'one', eventType: 'neutral',
+    eventText: (ctx, r) => `Напоминание: у игрока ${ctx.players.find(p => p.id === r?.targetPlayerId)?.name || '?'} — «${r?.category}»: ${r?.text}.`
+  });
 
   // «Молчание»: мут на раунд + голос за двоих.
   E.register('mute_and_double_vote', async ctx => {
@@ -1127,6 +1134,92 @@
   E.register('delay_bonus_reveal', async ctx => {
     await addRoundEffect(ctx, { target_player_id: ctx.player.id });
   }, { targetType: 'self', eventType: 'neutral', eventText: ctx => `${ctx.player.name || 'Игрок'} запросил(а) задержку раскрытия бонусного свойства бункера.` });
+
+  // 1665 «Ложный след» — суть карты в том, чтобы соврать, НЕ БУДУЧИ уличённым.
+  // Публичное объявление «Игрок X использовал «Ложный след»» полностью ломает карту —
+  // все сразу понимают, у кого искать обман. Событие в ленте остаётся (факт есть),
+  // но без указания, кто именно это сделал.
+  E.register('false_trail', async ctx => {
+    const target = targetId(ctx);
+    return { targetPlayerId: target };
+  }, { targetType: 'self', eventType: 'neutral', eventText: () => 'В этом раунде кто-то объявил заведомо ложную информацию о своей характеристике (кто именно — неизвестно).' });
+
+  // 1687 «Поменяться судьбой» — 4 реальных варианта, выбор в момент применения.
+  async function swapAllCardsExcept(ctx, playerA, playerB, excludeCardId) {
+    const cardsA = await playerCards(ctx, playerA);
+    const cardsB = await playerCards(ctx, playerB);
+    const byCategory = new Map();
+    for (const c of cardsA) { if (c.id === excludeCardId) continue; if (!byCategory.has(c.category)) byCategory.set(c.category, {}); byCategory.get(c.category).a = c; }
+    for (const c of cardsB) { if (c.id === excludeCardId) continue; if (!byCategory.has(c.category)) byCategory.set(c.category, {}); byCategory.get(c.category).b = c; }
+    const fields = c => ({ text: c.text, value: c.value, revealed: c.revealed, used: c.used, used_targets: c.used_targets, pool_id: c.pool_id, effect_key: c.effect_key, effect_params: c.effect_params, target_type: c.target_type, target_kind: c.target_kind });
+    for (const [, pair] of byCategory) {
+      if (!pair.a || !pair.b) continue; // категория есть только у одного — пропускаем, менять нечего
+      const snapA = fields(pair.a), snapB = fields(pair.b);
+      await db(ctx).from('player_cards').update(snapB).eq('id', pair.a.id);
+      await db(ctx).from('player_cards').update(snapA).eq('id', pair.b.id);
+    }
+  }
+
+  E.register('swap_fates', async ctx => {
+    const target = targetId(ctx);
+    const modes = [
+      'Воскрешение: вы уходите в изгнание, цель возвращается в игру',
+      'Обмен количеством голосов, поданных против каждого в этом раунде',
+      'Обмен статусом «выставлен/не выставлен» на голосование',
+      'Полный обмен карточками персонажей'
+    ];
+    const choice = window.AliveEffectsUI?.pickCategory
+      ? await window.AliveEffectsUI.pickCategory(modes, '«Поменяться судьбой» — выберите вариант')
+      : modes[Number(window.prompt(`Выберите вариант:\n${modes.map((m, i) => `${i + 1}. ${m}`).join('\n')}\n\nНомер:`)) - 1];
+    if (!choice) return false;
+    const mode = modes.indexOf(choice);
+
+    if (mode === 0) {
+      const targetPlayer = ctx.players.find(p => p.id === target);
+      if (!targetPlayer || targetPlayer.is_alive !== false) throw new Error('Этот вариант работает только с уже выбывшим из игры игроком.');
+      const { error: e1 } = await db(ctx).from('players').update({ is_alive: true }).eq('id', target);
+      const { error: e2 } = await db(ctx).from('players').update({ is_alive: false }).eq('id', ctx.player.id);
+      if (e1 || e2) throw (e1 || e2);
+      return { mode: 'revive', targetPlayerId: target };
+    }
+
+    if (mode === 1) {
+      const { data: votes, error } = await db(ctx).from('votes').select('*').eq('room_code', roomCode(ctx)).eq('round', round(ctx));
+      if (error) throw error;
+      for (const v of (votes || [])) {
+        if (v.target_id === ctx.player.id) await db(ctx).from('votes').update({ target_id: target }).eq('id', v.id);
+        else if (v.target_id === target) await db(ctx).from('votes').update({ target_id: ctx.player.id }).eq('id', v.id);
+      }
+      return { mode: 'votes', targetPlayerId: target };
+    }
+
+    if (mode === 2) {
+      const nominees = ctx.room.nominees || [];
+      const iAmNominated = nominees.includes(ctx.player.id);
+      const targetNominated = nominees.includes(target);
+      if (iAmNominated === targetNominated) throw new Error('У вас одинаковый статус выставления на голосование — менять нечего.');
+      const next = nominees.filter(id => id !== ctx.player.id && id !== target);
+      next.push(iAmNominated ? target : ctx.player.id);
+      const { error } = await db(ctx).from('rooms').update({ nominees: next }).eq('code', roomCode(ctx));
+      if (error) throw error;
+      return { mode: 'nomination', targetPlayerId: target };
+    }
+
+    // mode === 3 — полный обмен картами (кроме самой карты «Поменяться судьбой», которая сейчас в использовании)
+    await swapAllCardsExcept(ctx, ctx.player.id, target, ctx.card.id);
+    return { mode: 'cards', targetPlayerId: target };
+  }, {
+    targetType: 'one', eventType: 'neutral',
+    eventText: (ctx, r) => {
+      const labels = {
+        revive: 'ушёл(ла) в изгнание, вернув выбранного игрока в игру',
+        votes: 'обменялся(ась) количеством голосов «против» с выбранным игроком',
+        nomination: 'обменялся(ась) статусом выставления на голосование',
+        cards: 'полностью обменялся(ась) карточками персонажа с выбранным игроком'
+      };
+      return `${ctx.player.name || 'Игрок'} ${labels[r?.mode] || 'применил(а) «Поменяться судьбой»'} («Поменяться судьбой»).`;
+    }
+  });
 
   E.register('narrative_effect', async ctx => {
     const ids = ctx.targets.map(t => t.id || t);
