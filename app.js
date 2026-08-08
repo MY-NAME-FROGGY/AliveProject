@@ -1697,20 +1697,10 @@ async function loadMyCard() {
         const isSpecial = c.category === 'special_condition';
         let liClass = '', extra = '';
 
-        if (!c.revealed) {
-            if (amEliminated) {
-                extra = '<div class="muted-note" style="font-size:11px; margin-top:3px;">(вы выбыли — открытие недоступно)</div>';
-            } else if (room.current_phase !== 'reveal') {
-                extra = '<div class="muted-note" style="font-size:11px; margin-top:3px;">(не открыто остальным — доступно только в фазе «Открытие раунда»)</div>';
-            } else if (!isMyRevealTurn) {
-                extra = '<div class="muted-note" style="font-size:11px; margin-top:3px;">(не открыто остальным — сейчас не ваш ход)</div>';
-            } else {
-                const check = canRevealCategory(card, room, c.category);
-                extra = check.ok
-                    ? `<button class="btn btn-sm btn-primary" style="margin-top:5px;" onclick="actionRevealTrait('${c.id}')">Открыть остальным</button>`
-                    : `<div class="muted-note" style="font-size:11px; margin-top:3px;">${escapeHtml(check.reason)}</div>`;
-            }
-        } else if (isSpecial && !c.used) {
+        if (isSpecial && !c.used) {
+            // Спецусловия — карты-действия, а не информация «на раскрытие по расписанию»:
+            // используются в любой момент игры, без привязки к фазе «Открытие», очереди хода
+            // и лимиту характеристик за раунд (это ограничение только для обычных характеристик ниже).
             liClass = 'special-unused';
             if (amEliminated) {
                 extra = '<div class="muted-note" style="font-size:11px; margin-top:3px;">(вы выбыли — использование недоступно)</div>';
@@ -1755,6 +1745,19 @@ async function loadMyCard() {
                             </div>`;
                     }
                 }
+            }
+        } else if (!c.revealed) {
+            if (amEliminated) {
+                extra = '<div class="muted-note" style="font-size:11px; margin-top:3px;">(вы выбыли — открытие недоступно)</div>';
+            } else if (room.current_phase !== 'reveal') {
+                extra = '<div class="muted-note" style="font-size:11px; margin-top:3px;">(не открыто остальным — доступно только в фазе «Открытие раунда»)</div>';
+            } else if (!isMyRevealTurn) {
+                extra = '<div class="muted-note" style="font-size:11px; margin-top:3px;">(не открыто остальным — сейчас не ваш ход)</div>';
+            } else {
+                const check = canRevealCategory(card, room, c.category);
+                extra = check.ok
+                    ? `<button class="btn btn-sm btn-primary" style="margin-top:5px;" onclick="actionRevealTrait('${c.id}')">Открыть остальным</button>`
+                    : `<div class="muted-note" style="font-size:11px; margin-top:3px;">${escapeHtml(check.reason)}</div>`;
             }
         } else if (isSpecial && c.used) {
             liClass = 'special-used';
