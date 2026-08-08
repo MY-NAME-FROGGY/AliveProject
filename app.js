@@ -1346,6 +1346,7 @@ function renderGameTable() {
     `;
 
     if (!isHost) loadMyCard();
+    if (isHost) loadHostMasterPanel();
     loadScenarioPanelGame();
     refreshEventsFeed();
     refreshGameChat();
@@ -1474,7 +1475,197 @@ function renderHostToolsPanel(room) {
                 <button class="btn btn-ghost btn-sm" onclick="actionQuickEvent('incident')">💥 ЧП в бункере</button>
             </div>
             <p class="muted-note" style="margin-top:8px;">«Находка» досрочно открывает ещё одно бонусное свойство бункера. «ЧП» на 60 секунд отнимает возможность говорить в чате у случайного игрока.</p>
+
+            <div id="hostMasterPanel"></div>
         </div>`;
+}
+
+async function loadHostMasterPanel() {
+    const el = document.getElementById('hostMasterPanel');
+    if (!el || !state.room) return;
+    const room = state.room;
+
+    const [{ data: resources }, { data: properties }] = await Promise.all([
+        supabaseClient.from('room_resources').select('*').eq('room_code', state.currentRoomCode).order('key'),
+        supabaseClient.from('room_bunker_properties').select('*').eq('room_code', state.currentRoomCode).order('id')
+    ]);
+    state.hostPropertiesCache = properties || [];
+
+    let catalogOptions = '';
+    if (room.scenario_id) {
+        const existingIds = (properties || []).map(p => p.property_id).filter(Boolean);
+        const { data: catalog } = await supabaseClient.from('bunker_properties').select('id,type,text');
+        state.hostCatalogCache = (catalog || []).filter(c => !existingIds.includes(c.id));
+        catalogOptions = state.hostCatalogCache.map(c => `<option value="${c.id}">${c.type === 'bonus' ? 'Бонус · ' : 'База · '}${escapeHtml(c.text)}</option>`).join('');
+    }
+
+    const resourceRows = (resources || []).map(r => `
+        <div style="display:flex; gap:6px; align-items:center; margin-bottom:4px; flex-wrap:wrap;">
+            <span style="flex:1;">${escapeHtml(r.label)} <span class="muted-note">(${escapeHtml(r.key)}, ${escapeHtml(r.unit || 'months')})</span></span>
+            <input type="number" id="hostResVal_${r.key}" value="${r.amount}" style="width:80px;">
+            <button class="btn btn-sm btn-primary" onclick="actionHostSetResource('${r.key}')">✓</button>
+            <button class="btn btn-sm btn-ghost" onclick="actionHostDeleteResource('${r.key}')">✕</button>
+        </div>
+    `).join('') || '<p class="muted-note">Ресурсы не заведены.</p>';
+
+    const propertyRows = (properties || []).map(p => `
+        <div style="display:flex; gap:6px; align-items:center; margin-bottom:4px; flex-wrap:wrap;">
+            <span style="flex:1;">${p.type === 'bonus' ? '🎁' : '🏠'} ${escapeHtml(p.text)}</span>
+            <label class="muted-note"><input type="checkbox" style="width:auto;" ${p.available !== false ? 'checked' : ''} onchange="actionHostTogglePropertyField(${p.id}, 'available')"> доступно</label>
+            <label class="muted-note"><input type="checkbox" style="width:auto;" ${p.revealed ? 'checked' : ''} onchange="actionHostTogglePropertyField(${p.id}, 'revealed')"> раскрыто</label>
+            <label class="muted-note"><input type="checkbox" style="width:auto;" ${p.blocked ? 'checked' : ''} onchange="actionHostTogglePropertyField(${p.id}, 'blocked')"> заблокировано</label>
+            <button class="btn btn-sm btn-ghost" onclick="actionHostDeleteProperty(${p.id})">✕</button>
+        </div>
+    `).join('') || '<p class="muted-note">Свойств пока нет.</p>';
+
+    el.innerHTML = `
+        <h3 style="margin-top:16px;">🛠 Мастер-редактор</h3>
+        <p class="muted-note">Живое вмешательство в игру — меняйте что угодно прямо по ходу партии.</p>
+
+        <h4 style="margin-top:10px;">Ресурсы бункера</h4>
+        ${resourceRows}
+        <div style="display:flex; gap:6px; margin-top:6px; flex-wrap:wrap;">
+            <input id="hostNewResKey" placeholder="ключ (food_extra)" style="flex:1; min-width:100px;">
+            <input id="hostNewResLabel" placeholder="название" style="flex:1; min-width:100px;">
+            <select id="hostNewResUnit"><option value="months">Месяцы</option><option value="days">Дни</option><option value="yesno">Да/Нет</option></select>
+            <input type="number" id="hostNewResAmount" placeholder="0" style="width:70px;">
+            <button class="btn btn-sm btn-primary" onclick="actionHostAddResource()">+ Добавить</button>
+        </div>
+
+        <h4 style="margin-top:14px;">Свойства бункера</h4>
+        ${propertyRows}
+        <div style="display:flex; gap:6px; margin-top:6px; flex-wrap:wrap;">
+            ${catalogOptions ? `<select id="hostCatalogPropSelect" style="flex:1; min-width:160px;">${catalogOptions}</select><button class="btn btn-sm btn-primary" onclick="actionHostAddPropertyFromCatalog()">+ Из каталога</button>` : '<span class="muted-note">Каталог пуст или сценарий не выбран.</span>'}
+        </div>
+        <div style="display:flex; gap:6px; margin-top:6px; flex-wrap:wrap;">
+            <input id="hostCustomPropText" placeholder="своё свойство (текст)" style="flex:1; min-width:160px;">
+            <select id="hostCustomPropType"><option value="bonus">Бонус</option><option value="base">База</option></select>
+            <button class="btn btn-sm btn-primary" onclick="actionHostAddCustomProperty()">+ Добавить своё</button>
+        </div>
+
+        <h4 style="margin-top:14px;">Карточки игроков</h4>
+        <select id="hostCardEditorPlayer" onchange="loadHostCardEditor(this.value)">
+            <option value="">— выберите игрока —</option>
+            ${state.players.filter(p => p.id !== room.host_id).map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('')}
+        </select>
+        <div id="hostCardEditorList" style="margin-top:8px;"></div>
+    `;
+}
+
+async function actionHostSetResource(key) {
+    const input = document.getElementById('hostResVal_' + key);
+    if (!input) return;
+    const { error } = await supabaseClient.from('room_resources')
+        .update({ amount: Number(input.value || 0), updated_at: new Date().toISOString() })
+        .eq('room_code', state.currentRoomCode).eq('key', key);
+    if (error) return alert('Ошибка: ' + error.message);
+    loadHostMasterPanel();
+    refreshBunkerResources();
+}
+
+async function actionHostDeleteResource(key) {
+    if (!confirm('Удалить ресурс из игры?')) return;
+    await supabaseClient.from('room_resources').delete().eq('room_code', state.currentRoomCode).eq('key', key);
+    loadHostMasterPanel();
+    refreshBunkerResources();
+}
+
+async function actionHostAddResource() {
+    const key = document.getElementById('hostNewResKey').value.trim();
+    const label = document.getElementById('hostNewResLabel').value.trim();
+    const unit = document.getElementById('hostNewResUnit').value;
+    const amount = Number(document.getElementById('hostNewResAmount').value || 0);
+    if (!key || !label) return alert('Укажите ключ и название.');
+    const { error } = await supabaseClient.from('room_resources')
+        .upsert({ room_code: state.currentRoomCode, key, label, unit, amount }, { onConflict: 'room_code,key' });
+    if (error) return alert('Ошибка: ' + error.message);
+    loadHostMasterPanel();
+    refreshBunkerResources();
+}
+
+async function actionHostTogglePropertyField(id, field) {
+    const p = (state.hostPropertiesCache || []).find(x => x.id === id);
+    if (!p) return;
+    const { error } = await supabaseClient.from('room_bunker_properties').update({ [field]: !p[field] }).eq('id', id);
+    if (error) return alert('Ошибка: ' + error.message);
+    loadHostMasterPanel();
+    await refreshRoomBunkerProperties();
+    refreshBunkerList();
+}
+
+async function actionHostDeleteProperty(id) {
+    if (!confirm('Удалить это свойство из бункера этой комнаты?')) return;
+    await supabaseClient.from('room_bunker_properties').delete().eq('id', id);
+    loadHostMasterPanel();
+    await refreshRoomBunkerProperties();
+    refreshBunkerList();
+}
+
+async function actionHostAddPropertyFromCatalog() {
+    const sel = document.getElementById('hostCatalogPropSelect');
+    if (!sel || !sel.value) return;
+    const pick = (state.hostCatalogCache || []).find(x => String(x.id) === String(sel.value));
+    if (!pick) return;
+    const { error } = await supabaseClient.from('room_bunker_properties').insert({
+        room_code: state.currentRoomCode, property_id: pick.id, type: pick.type, text: pick.text,
+        available: true, revealed: true, blocked: false
+    });
+    if (error) return alert('Ошибка: ' + error.message);
+    loadHostMasterPanel();
+    await refreshRoomBunkerProperties();
+    refreshBunkerList();
+}
+
+async function actionHostAddCustomProperty() {
+    const textEl = document.getElementById('hostCustomPropText');
+    const typeEl = document.getElementById('hostCustomPropType');
+    const text = textEl.value.trim();
+    if (!text) return alert('Введите текст свойства.');
+    // Если у вас в БД property_id обязателен (NOT NULL / внешний ключ на bunker_properties),
+    // эта вставка упадёт с ошибкой — тогда нужно снять это ограничение отдельным ALTER TABLE.
+    const { error } = await supabaseClient.from('room_bunker_properties').insert({
+        room_code: state.currentRoomCode, property_id: null, type: typeEl.value, text,
+        available: true, revealed: true, blocked: false
+    });
+    if (error) return alert('Ошибка: ' + error.message + '\n\nВозможно, property_id не может быть пустым в вашей схеме — уберите это ограничение через ALTER TABLE room_bunker_properties ALTER COLUMN property_id DROP NOT NULL.');
+    textEl.value = '';
+    loadHostMasterPanel();
+    await refreshRoomBunkerProperties();
+    refreshBunkerList();
+}
+
+async function loadHostCardEditor(playerId) {
+    const el = document.getElementById('hostCardEditorList');
+    if (!el) return;
+    if (!playerId) { el.innerHTML = ''; return; }
+    const { data, error } = await supabaseClient.from('player_cards').select('*')
+        .eq('room_code', state.currentRoomCode).eq('player_id', playerId).order('category');
+    if (error) { el.innerHTML = '<p class="muted-note">Ошибка загрузки карт.</p>'; return; }
+    el.innerHTML = (data || []).map(c => `
+        <div class="card-row" style="flex-direction:column; align-items:stretch;">
+            <div style="display:flex; justify-content:space-between;">
+                <span class="card-row-cat">${escapeHtml(CATEGORY_LABELS[c.category] || c.category)}</span>
+                <span class="muted-note">${c.revealed ? 'раскрыто' : 'скрыто'}${c.used ? ' · использовано' : ''}</span>
+            </div>
+            <textarea id="hostCardText_${c.id}" style="min-height:50px;">${escapeHtml(c.text || '')}</textarea>
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                <label class="muted-note">Значение <input type="number" id="hostCardValue_${c.id}" value="${c.value ?? 0}" style="width:80px; display:inline-block;"></label>
+                <label class="muted-note"><input type="checkbox" id="hostCardRevealed_${c.id}" style="width:auto;" ${c.revealed ? 'checked' : ''}> раскрыто</label>
+                <label class="muted-note"><input type="checkbox" id="hostCardUsed_${c.id}" style="width:auto;" ${c.used ? 'checked' : ''}> использовано</label>
+                <button class="btn btn-sm btn-primary" onclick="actionHostSaveCard('${c.id}')">Сохранить</button>
+            </div>
+        </div>
+    `).join('') || '<p class="muted-note">У игрока нет карт.</p>';
+}
+
+async function actionHostSaveCard(cardId) {
+    const text = document.getElementById('hostCardText_' + cardId).value;
+    const value = Number(document.getElementById('hostCardValue_' + cardId).value || 0);
+    const revealed = document.getElementById('hostCardRevealed_' + cardId).checked;
+    const used = document.getElementById('hostCardUsed_' + cardId).checked;
+    const { error } = await supabaseClient.from('player_cards').update({ text, value, revealed, used }).eq('id', cardId);
+    if (error) return alert('Ошибка: ' + error.message);
+    updateGameDynamic();
 }
 
 function renderHostPhaseControls(room, hasTimer) {
