@@ -1221,6 +1221,40 @@
     }
   });
 
+  // 1688 «Обменяться местом с ведущим на один раунд» — ограниченная версия власти ведущего,
+  // намеренно БЕЗ мьюта/кика/изменения настроек (это отдельная, более рискованная возможность —
+  // для неё нужен отдельный обработчик, если понадобится).
+  E.register('swap_with_host', async ctx => {
+    // 1) Раскрыть случайное ещё не раскрытое bonus-свойство бункера раньше срока.
+    const props = await roomProperties(ctx);
+    const hidden = props.filter(p => p.type === 'bonus' && !p.revealed);
+    let revealedText = null;
+    if (hidden.length) {
+      const pick = hidden[Math.floor(Math.random() * hidden.length)];
+      const { error } = await db(ctx).from('room_bunker_properties').update({ revealed: true, available: true }).eq('id', pick.id);
+      if (error) throw error;
+      revealedText = pick.text;
+    }
+
+    // 2) Решающий голос при ничьей позже в этом раунде — переиспользуем готовую логику tie_breaker.
+    await db(ctx).from('round_effects').insert({
+      room_code: roomCode(ctx), round: round(ctx), effect_key: 'tie_breaker',
+      source_player_id: ctx.player.id, target_player_id: ctx.player.id, effect_params: {}, is_active: true
+    });
+
+    // 3) Один раз принудительно продвинуть текущую фазу — та же функция, что и кнопка ведущего «Далее».
+    let advanced = false;
+    if (typeof window !== 'undefined' && typeof window.hostAdvancePhase === 'function') {
+      await window.hostAdvancePhase();
+      advanced = true;
+    }
+
+    return { revealedText, advanced };
+  }, {
+    targetType: 'self', eventType: 'positive',
+    eventText: (ctx, r) => `${ctx.player.name || 'Игрок'} на раунд «занял место ведущего»: ${r?.revealedText ? `раскрыл(а) «${r.revealedText}», ` : ''}получил(а) решающий голос при возможной ничьей${r?.advanced ? ', и принудительно продвинул(а) текущую фазу' : ''}.`
+  });
+
   E.register('narrative_effect', async ctx => {
     const ids = ctx.targets.map(t => t.id || t);
     return { targetPlayerId: ids[0] || null };
