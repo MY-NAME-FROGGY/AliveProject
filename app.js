@@ -807,21 +807,38 @@ function defaultResourceItems() {
     };
 }
 
+function renderResourceValueField(key, unit, start) {
+    return unit === 'yesno'
+        ? `<select id="resVal_${key}" style="width:100%;"><option value="1" ${start ? 'selected' : ''}>Да</option><option value="0" ${!start ? 'selected' : ''}>Нет</option></select>`
+        : `<input type="number" min="0" id="resVal_${key}" value="${start ?? 0}">`;
+}
+
+// Перерисовывает поле значения при смене единицы измерения (месяцы/дни ↔ да-нет) —
+// раньше select менялся, а поле значения оставалось прежним и не соответствовало новой единице.
+function onResourceUnitChange(key) {
+    const unitEl = document.getElementById('resUnit_' + key);
+    const wrap = document.getElementById('resValWrap_' + key);
+    if (!unitEl || !wrap) return;
+    const unit = unitEl.value;
+    const prevInput = document.getElementById('resVal_' + key);
+    let start = 0;
+    if (prevInput) {
+        start = unit === 'yesno' ? (Number(prevInput.value) > 0 ? 1 : 0) : Number(prevInput.value || 0);
+    }
+    wrap.innerHTML = renderResourceValueField(key, unit, start);
+}
+
 function renderResourceRow(key, item) {
     const unitOptions = [
         ['months', 'Месяцы'], ['days', 'Дни'], ['yesno', 'Да/Нет']
     ].map(([v, label]) => `<option value="${v}" ${item.unit === v ? 'selected' : ''}>${label}</option>`).join('');
 
-    const valueField = item.unit === 'yesno'
-        ? `<select id="resVal_${key}" style="width:100%;"><option value="1" ${item.start ? 'selected' : ''}>Да</option><option value="0" ${!item.start ? 'selected' : ''}>Нет</option></select>`
-        : `<input type="number" min="0" id="resVal_${key}" value="${item.start ?? 0}">`;
-
     return `
         <div class="resource-row" style="display:grid; grid-template-columns:auto 1fr 110px 90px; gap:8px; align-items:center; margin-bottom:6px;">
             <input type="checkbox" id="resEnabled_${key}" style="width:auto;" ${item.enabled ? 'checked' : ''}>
             <input type="text" id="resLabel_${key}" value="${item.label}" placeholder="Название ресурса">
-            <select id="resUnit_${key}">${unitOptions}</select>
-            <div>${valueField}</div>
+            <select id="resUnit_${key}" onchange="onResourceUnitChange('${key}')">${unitOptions}</select>
+            <div id="resValWrap_${key}">${renderResourceValueField(key, item.unit, item.start)}</div>
         </div>`;
 }
 
@@ -1909,11 +1926,35 @@ async function actionRevealTrait(cardId) {
     const check = canRevealCategory(card, room, target.category);
     if (!check.ok) return alert(check.reason);
 
+    if (target.category === 'luggage_big' || target.category === 'luggage_small') {
+        const luggageBlock = await checkLuggageBlocked(room, target.category);
+        if (luggageBlock) return alert(luggageBlock);
+    }
+
     const { error } = await supabaseClient.from('player_cards').update({ revealed: true, round_revealed: room.current_round }).eq('id', cardId);
     if (error) { console.error('Ошибка открытия характеристики:', error); return alert('Не удалось открыть характеристику: ' + error.message); }
 
     loadMyCard();
     updateGameDynamic();
+}
+
+// Проверяет активные эффекты block_luggage за этот раунд: либо направленные лично на вас,
+// либо с scope='all' (действуют на всех игроков сразу — например карта «Запрет»).
+async function checkLuggageBlocked(room, category) {
+    const { data, error } = await supabaseClient.from('round_effects').select('*')
+        .eq('room_code', state.currentRoomCode).eq('round', room.current_round || 1)
+        .eq('is_active', true).eq('effect_key', 'block_luggage');
+    if (error) { console.error('[checkLuggageBlocked]', error); return null; }
+
+    const blocking = (data || []).find(e => {
+        const categories = e.effect_params?.categories || ['luggage_big', 'luggage_small'];
+        if (!categories.includes(category)) return false;
+        return e.target_player_id === null || e.target_player_id === state.playerId;
+    });
+    if (!blocking) return null;
+    return blocking.target_player_id === null
+        ? 'Использование багажа заблокировано у всех игроков в этом раунде.'
+        : 'Использование багажа заблокировано у вас в этом раунде.';
 }
 
 async function loadScenarioPanelGame() {
@@ -1999,8 +2040,11 @@ async function refreshBunkerResources() {
         <ul style="list-style:none;">
             ${data.map(r => {
                 const low = Number(r.amount) <= 0;
+                const display = r.unit === 'yesno'
+                    ? (Number(r.amount) > 0 ? 'Да' : 'Нет')
+                    : `${r.amount} ${resourceUnitLabel(r.unit)}`;
                 return `<li style="display:flex; justify-content:space-between; padding:4px 0; ${low ? 'color:var(--danger);' : ''}">
-                    <span>${escapeHtml(r.label)}</span><strong>${escapeHtml(String(r.amount))}</strong>
+                    <span>${escapeHtml(r.label)}</span><strong>${escapeHtml(display)}</strong>
                 </li>`;
             }).join('')}
         </ul>
@@ -2460,7 +2504,7 @@ async function syncRoomResources(roomCode, items) {
     const enabledEntries = Object.entries(items).filter(([, item]) => item.enabled);
     if (!enabledEntries.length) return;
     const rows = enabledEntries.map(([key, item]) => ({
-        room_code: roomCode, key, label: item.label, amount: Number(item.start || 0)
+        room_code: roomCode, key, label: item.label, amount: Number(item.start || 0), unit: item.unit || 'months'
     }));
     const { error } = await supabaseClient.from('room_resources').upsert(rows, { onConflict: 'room_code,key' });
     if (error) console.error('[syncRoomResources]', error);
