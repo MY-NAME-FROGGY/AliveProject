@@ -125,11 +125,21 @@
     { targetType: 'self', eventType: 'negative' });
 
   E.register('block_luggage', async ctx => {
+    const scopeAll = ctx.params.scope === 'all';
     await addRoundEffect(ctx, {
-      target_player_id: targetId(ctx) || ctx.player.id,
-      effect_params: { categories: ['luggage_big', 'luggage_small'], duration: 'round' }
+      target_player_id: scopeAll ? null : (targetId(ctx) || ctx.player.id),
+      effect_params: {
+        categories: ctx.params.categories || ['luggage_big', 'luggage_small'],
+        duration: 'round',
+        scope: scopeAll ? 'all' : 'target'
+      }
     });
-  }, { targetType: 'one', eventType: 'negative' });
+  }, {
+    targetType: 'one', eventType: 'negative',
+    eventText: ctx => ctx.params.scope === 'all'
+      ? `${ctx.player.name || 'Игрок'} заблокировал(а) использование багажа всем игрокам в этом раунде.`
+      : `${ctx.player.name || 'Игрок'} заблокировал(а) использование багажа.`
+  });
 
   E.register('steal_trait', async ctx => {
     const target = targetId(ctx);
@@ -903,7 +913,7 @@
     const items = ctx.room.settings?.resources?.items || {};
     const manualSchema = {};
     for (const [key, item] of Object.entries(items)) {
-      if (item?.enabled) manualSchema[key] = { label: item.label || key, start: Number(item.start || 0) };
+      if (item?.enabled) manualSchema[key] = { label: item.label || key, start: Number(item.start || 0), unit: item.unit || 'months' };
     }
     const enabled = Object.keys(manualSchema).length > 0;
     return { enabled, schema: manualSchema, forced: false };
@@ -913,9 +923,9 @@
     const { data: existing } = await db(ctx).from('room_resources').select('*')
       .eq('room_code', roomCode(ctx)).eq('key', key).maybeSingle();
     if (existing) return existing;
-    const def = schema[key] || { label: key, start: 0 };
+    const def = schema[key] || { label: key, start: 0, unit: 'months' };
     const { data: created, error } = await db(ctx).from('room_resources').insert({
-      room_code: roomCode(ctx), key, label: def.label || key, amount: Number(def.start || 0)
+      room_code: roomCode(ctx), key, label: def.label || key, amount: Number(def.start || 0), unit: def.unit || 'months'
     }).select().single();
     if (error) throw error;
     return created;
