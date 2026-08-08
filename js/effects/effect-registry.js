@@ -993,36 +993,47 @@
     if (error) throw error;
   }
 
+  // Разбивает текущую очередь на «уже отходивших» (их позиции трогать нельзя — иначе
+  // room.reveal_index после перестановки укажет не на того игрока и фаза может
+  // завершиться раньше, чем последний игрок успеет сходить) и «ещё не отходивших»
+  // (только их можно переставлять местами).
+  async function splitRevealOrder(ctx, forRound) {
+    const full = await currentRevealOrderIds(ctx, forRound);
+    const idx = forRound === round(ctx) ? (ctx.room.reveal_index || 0) : 0;
+    return { already: full.slice(0, idx), upcoming: full.slice(idx) };
+  }
+
   // 1632 — в СЛЕДУЮЩЕМ раунде открывает характеристику последним.
   E.register('move_to_last_next_round', async ctx => {
     const targetRound = round(ctx) + 1;
-    const order = await currentRevealOrderIds(ctx, targetRound);
+    const order = await currentRevealOrderIds(ctx, targetRound); // будущий раунд — reveal_index там ещё 0, весь список «предстоящий»
     const without = order.filter(id => id !== ctx.player.id);
     await setRevealOrderOverride(ctx, targetRound, [...without, ctx.player.id]);
   }, { targetType: 'self', eventType: 'neutral', eventText: ctx => `${ctx.player.name || 'Игрок'} будет открывать характеристику последним(ей) в следующем раунде.` });
 
-  // 1675 — поменяться очередью хода с выбранным игроком (в текущей фазе открытия).
+  // 1675 — поменяться очередью хода с выбранным игроком (только среди тех, кто ещё не ходил).
   E.register('swap_reveal_order', async ctx => {
     const target = targetId(ctx);
     const r = round(ctx);
-    const order = await currentRevealOrderIds(ctx, r);
-    const i1 = order.indexOf(ctx.player.id);
-    const i2 = order.indexOf(target);
-    if (i1 === -1 || i2 === -1) throw new Error('Не удалось определить текущую очередь хода.');
-    [order[i1], order[i2]] = [order[i2], order[i1]];
-    await setRevealOrderOverride(ctx, r, order);
+    const { already, upcoming } = await splitRevealOrder(ctx, r);
+    const i1 = upcoming.indexOf(ctx.player.id);
+    const i2 = upcoming.indexOf(target);
+    if (i1 === -1) throw new Error('Вы уже походили в этой фазе открытия — менять очередь поздно.');
+    if (i2 === -1) throw new Error('Выбранный игрок уже походил в этой фазе открытия — с ним нельзя поменяться очередью.');
+    [upcoming[i1], upcoming[i2]] = [upcoming[i2], upcoming[i1]];
+    await setRevealOrderOverride(ctx, r, [...already, ...upcoming]);
     return { targetPlayerId: target };
   }, { targetType: 'one', eventType: 'neutral', eventText: ctx => `${ctx.player.name || 'Игрок'} поменялся(ась) очередью хода с выбранным игроком.` });
 
-  // 1706 — передать право хода: выбранный игрок открывает следующим сразу после текущего активного.
+  // 1706 — передать право хода: выбранный игрок открывает СЛЕДУЮЩИМ (сразу после текущего активного),
+  // из числа тех, кто ещё не ходил.
   E.register('pass_turn_to_next', async ctx => {
     const target = targetId(ctx);
     const r = round(ctx);
-    const order = await currentRevealOrderIds(ctx, r);
-    const activeIdx = ctx.room.reveal_index || 0;
-    const without = order.filter(id => id !== target);
-    without.splice(activeIdx + 1, 0, target);
-    await setRevealOrderOverride(ctx, r, without);
+    const { already, upcoming } = await splitRevealOrder(ctx, r);
+    if (!upcoming.includes(target)) throw new Error('Выбранный игрок уже походил в этой фазе открытия — передать ему ход нельзя.');
+    const without = upcoming.filter(id => id !== target);
+    await setRevealOrderOverride(ctx, r, [...already, target, ...without]);
     return { targetPlayerId: target };
   }, { targetType: 'one', eventType: 'neutral', eventText: ctx => `${ctx.player.name || 'Игрок'} передал(а) право хода — следующим откроет выбранный игрок.` });
 
