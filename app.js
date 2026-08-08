@@ -2261,15 +2261,27 @@ async function actionRevealBonus() {
 
 async function actionResetToLobby() {
     stopGamePhaseTick();
-    await dbClearCards(state.currentRoomCode);
-    await dbClearEvents(state.currentRoomCode);
-    await dbClearVotes(state.currentRoomCode);
-    await supabaseClient.from('players').update({ is_alive: true }).eq('room_code', state.currentRoomCode);
+    const roomCode = state.currentRoomCode;
+    const scenarioId = state.room?.scenario_id;
+
+    await dbClearCards(roomCode);
+    await dbClearEvents(roomCode);
+    await dbClearVotes(roomCode);
+    await supabaseClient.from('players').update({ is_alive: true }).eq('room_code', roomCode);
+
+    // Таблицы движка спецусловий — без этого старые блокировки/эффекты/изменённые
+    // ресурсы бункера и переставленная очередь хода переживают рестарт и ошибочно
+    // применяются в новой игре (например, block_special_condition с прошлого теста
+    // снова совпадёт с раундом 1 новой партии).
+    await supabaseClient.from('round_effects').delete().eq('room_code', roomCode);
+    await supabaseClient.from('effect_log').delete().eq('room_code', roomCode);
+    await supabaseClient.from('room_resources').delete().eq('room_code', roomCode);
+    if (scenarioId) await dbSyncRoomBunkerProperties(roomCode, scenarioId);
 
     await dbUpdateRoom(state.currentRoomCode, {
         phase: 'lobby', countdown_ends_at: null, current_round: 1, current_phase: 'reveal',
         phase_ends_at: null, phase_running: false, phase_paused_remaining: null,
-        nominees: [], nominations: {}, defense_index: 0, reveal_index: 0,
+        nominees: [], nominations: {}, defense_index: 0, reveal_index: 0, reveal_order_override: null,
         active_bonus_ids: [], revealed_bonus_ids: [], scenario_visible: false, last_eliminated_id: null,
         final_reveal_unlocked: false, verdict: null, verdict_percent: null
     });
