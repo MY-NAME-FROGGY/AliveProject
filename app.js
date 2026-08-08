@@ -613,6 +613,20 @@ function stopPolling() {
     state.pollInterval = null;
 }
 
+// Раньше state.myCardCache обновлялась только когда игрок сам что-то делал в своей панели —
+// если ДРУГОЙ игрок применял эффект, меняющий вашу карту (кража, обмен, мутация, лечение и т.п.),
+// ваш экран никогда не узнавал об этом сам по себе. Сравниваем с БД на каждый тик поллинга
+// и перерисовываем панель, только если данные реально изменились — не сбрасываем открытые
+// пикеры целей понапрасну.
+async function refreshMyCardIfChanged() {
+    if (!state.currentRoomCode || !state.playerId) return;
+    const fresh = await dbFetchMyCard(state.currentRoomCode, state.playerId);
+    const sig = c => (c || []).map(x => `${x.id}:${x.text}:${x.value}:${x.revealed}:${x.used}`).sort().join('|');
+    if (sig(fresh) !== sig(state.myCardCache || [])) {
+        await loadMyCard();
+    }
+}
+
 async function pollTick() {
     if (!state.currentRoomCode) return;
 
@@ -684,6 +698,7 @@ async function pollTick() {
             renderGameTable();
         } else {
             updateGameDynamic();
+            if (!isHost) await refreshMyCardIfChanged();
         }
         state.lastRenderedView = 'game';
     }
