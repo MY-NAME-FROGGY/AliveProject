@@ -1396,20 +1396,26 @@ function renderFinalPhaseTable() {
 
     let hostControls = '';
     if (isHost && room.current_phase === 'awaiting_verdict') {
-        hostControls = `
-            <div class="settings-field wide" style="margin-top:10px;">
-                <label><input type="checkbox" id="finalRevealToggle" onchange="actionToggleFinalReveal()" ${room.final_reveal_unlocked ? 'checked' : ''} style="width:auto;display:inline-block;margin-right:6px;vertical-align:middle;">Разрешить игрокам открыть последнюю характеристику</label>
-            </div>
-            <div style="margin-top:10px; display:flex; gap:8px; justify-content:center; flex-wrap:wrap;">
-                <button class="btn ${room.verdict === 'victory' ? 'btn-primary' : 'btn-ghost'}" onclick="actionSetVerdictChoice('victory')">Победа</button>
-                <button class="btn ${room.verdict === 'defeat' ? 'btn-danger' : 'btn-ghost'}" onclick="actionSetVerdictChoice('defeat')">Поражение</button>
-            </div>
-            <div style="margin-top:8px;">
-                <input type="number" id="verdictPercent" placeholder="Шанс выжить" min="0" max="100" value="${room.verdict_percent ?? ''}" style="width:140px; display:inline-block; margin:0;"> %
-            </div>
-            <p class="muted-note" style="margin-top:6px;">Кнопки и процент видны только вам, игроки их не видят.</p>
-            <button class="btn btn-danger btn-sm" style="margin-top:10px;" onclick="actionAnnounceVerdict()">Огласить вердикт</button>
-        `;
+             hostControls = `
+         <div class="verdict-controls">
+             <div class="settings-field wide" style="margin-top:10px;">
+                 <label><input type="checkbox" id="finalRevealToggle" onchange="actionToggleFinalReveal()" ${room.final_reveal_unlocked ? 'checked' : ''} style="width:auto;display:inline-block;margin-right:6px;vertical-align:middle;">Разрешить игрокам открыть последнюю характеристику</label>
+             </div>
+             <div style="margin-top:10px; display:flex; gap:8px; justify-content:center; flex-wrap:wrap;">
+                 <button class="btn ${room.verdict === 'victory' ? 'btn-primary' : 'btn-ghost'}" onclick="actionSetVerdictChoice('victory')">Победа</button>
+                 <button class="btn ${room.verdict === 'defeat' ? 'btn-danger' : 'btn-ghost'}" onclick="actionSetVerdictChoice('defeat')">Поражение</button>
+             </div>
+             <div style="margin-top:12px;">
+                 <label class="muted-note" style="display:block; margin-bottom:6px;">Шанс выжить</label>
+                 <div style="display:flex; align-items:center; gap:10px; justify-content:center;">
+                     <input type="range" id="verdictPercentRange" min="0" max="100" value="${room.verdict_percent ?? 50}" oninput="document.getElementById('verdictPercent').value=this.value" style="flex:1; max-width:220px;">
+                     <input type="number" id="verdictPercent" placeholder="%" min="0" max="100" value="${room.verdict_percent ?? ''}" oninput="document.getElementById('verdictPercentRange').value=this.value" style="width:80px; margin:0;"> %
+                 </div>
+             </div>
+             <p class="muted-note" style="margin-top:6px;">Кнопки и процент видны только вам, игроки их не видят.</p>
+             <button class="btn btn-danger" style="margin-top:12px; width:100%;" onclick="actionAnnounceVerdict()">ОГЛАСИТЬ ВЕРДИКТ</button>
+         </div>
+     `;
     }
 
     document.getElementById('app').innerHTML = `
