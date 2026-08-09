@@ -1549,7 +1549,26 @@ async function loadHostMasterPanel() {
             ${state.players.filter(p => p.id !== room.host_id).map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('')}
         </select>
         <div id="hostCardEditorList" style="margin-top:8px;"></div>
+
+        ${renderEffectKeyReference()}
     `;
+}
+
+// Справочник всех реально зарегистрированных effect_key — берётся напрямую из движка
+// (AliveEffectEngine.list()), чтобы список не расходился с кодом effect-registry.js.
+// datalist даёт автоподстановку в поле effect_key выше — так сложнее опечататься.
+function renderEffectKeyReference() {
+    const keys = (typeof window !== 'undefined' && window.AliveEffectEngine?.list) ? window.AliveEffectEngine.list().sort() : [];
+    return `
+        <datalist id="registeredEffectKeys">
+            ${keys.map(k => `<option value="${escapeHtml(k)}">`).join('')}
+        </datalist>
+        <details style="margin-top:12px;">
+            <summary class="muted-note" style="cursor:pointer;">Справочник: все зарегистрированные effect_key (${keys.length})</summary>
+            <div class="muted-note" style="font-size:12px; line-height:1.7; margin-top:6px; max-height:200px; overflow-y:auto;">
+                ${keys.map(k => `<code style="background:var(--void); padding:1px 5px; border-radius:3px; margin:2px; display:inline-block;">${escapeHtml(k)}</code>`).join(' ')}
+            </div>
+        </details>`;
 }
 
 async function actionHostSetResource(key) {
@@ -1641,7 +1660,30 @@ async function loadHostCardEditor(playerId) {
     const { data, error } = await supabaseClient.from('player_cards').select('*')
         .eq('room_code', state.currentRoomCode).eq('player_id', playerId).order('category');
     if (error) { el.innerHTML = '<p class="muted-note">Ошибка загрузки карт.</p>'; return; }
-    el.innerHTML = (data || []).map(c => `
+    el.innerHTML = (data || []).map(c => {
+        const isSpecial = c.category === 'special_condition';
+        const mechanicFields = isSpecial ? `
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:6px;">
+                <label class="muted-note">effect_key
+                    <input id="hostCardEffectKey_${c.id}" value="${escapeHtml(c.effect_key || '')}" placeholder="начните вводить..." list="registeredEffectKeys">
+                </label>
+                <label class="muted-note">target_type
+                    <select id="hostCardTargetType_${c.id}">
+                        ${['self', 'one', 'two', 'all', 'one_any', 'host'].map(t => `<option value="${t}" ${c.target_type === t ? 'selected' : ''}>${t}</option>`).join('')}
+                    </select>
+                </label>
+                <label class="muted-note">target_kind
+                    <select id="hostCardTargetKind_${c.id}">
+                        ${['player', 'property'].map(t => `<option value="${t}" ${(c.target_kind || 'player') === t ? 'selected' : ''}>${t}</option>`).join('')}
+                    </select>
+                </label>
+                <label class="muted-note">effect_params (JSON)
+                    <input id="hostCardEffectParams_${c.id}" value='${escapeHtml(JSON.stringify(c.effect_params || {}))}'>
+                </label>
+            </div>
+            <p class="muted-note" style="font-size:11px; margin-top:2px;">effect_key должен совпадать с зарегистрированным в effect-registry.js — иначе карта при использовании выдаст ошибку «эффект не зарегистрирован».</p>
+        ` : '';
+        return `
         <div class="card-row" style="flex-direction:column; align-items:stretch;">
             <div style="display:flex; justify-content:space-between;">
                 <span class="card-row-cat">${escapeHtml(CATEGORY_LABELS[c.category] || c.category)}</span>
@@ -1652,18 +1694,38 @@ async function loadHostCardEditor(playerId) {
                 <label class="muted-note">Значение <input type="number" id="hostCardValue_${c.id}" value="${c.value ?? 0}" style="width:80px; display:inline-block;"></label>
                 <label class="muted-note"><input type="checkbox" id="hostCardRevealed_${c.id}" style="width:auto;" ${c.revealed ? 'checked' : ''}> раскрыто</label>
                 <label class="muted-note"><input type="checkbox" id="hostCardUsed_${c.id}" style="width:auto;" ${c.used ? 'checked' : ''}> использовано</label>
-                <button class="btn btn-sm btn-primary" onclick="actionHostSaveCard('${c.id}')">Сохранить</button>
             </div>
-        </div>
-    `).join('') || '<p class="muted-note">У игрока нет карт.</p>';
+            ${mechanicFields}
+            <button class="btn btn-sm btn-primary" style="margin-top:6px;" onclick="actionHostSaveCard('${c.id}', ${isSpecial})">Сохранить</button>
+        </div>`;
+    }).join('') || '<p class="muted-note">У игрока нет карт.</p>';
 }
 
-async function actionHostSaveCard(cardId) {
+async function actionHostSaveCard(cardId, isSpecial) {
     const text = document.getElementById('hostCardText_' + cardId).value;
     const value = Number(document.getElementById('hostCardValue_' + cardId).value || 0);
     const revealed = document.getElementById('hostCardRevealed_' + cardId).checked;
     const used = document.getElementById('hostCardUsed_' + cardId).checked;
-    const { error } = await supabaseClient.from('player_cards').update({ text, value, revealed, used }).eq('id', cardId);
+    const patch = { text, value, revealed, used };
+
+    if (isSpecial) {
+        const effectKeyEl = document.getElementById('hostCardEffectKey_' + cardId);
+        const targetTypeEl = document.getElementById('hostCardTargetType_' + cardId);
+        const targetKindEl = document.getElementById('hostCardTargetKind_' + cardId);
+        const paramsEl = document.getElementById('hostCardEffectParams_' + cardId);
+        if (effectKeyEl) patch.effect_key = effectKeyEl.value.trim() || null;
+        if (targetTypeEl) patch.target_type = targetTypeEl.value;
+        if (targetKindEl) patch.target_kind = targetKindEl.value;
+        if (paramsEl) {
+            try {
+                patch.effect_params = paramsEl.value.trim() ? JSON.parse(paramsEl.value) : {};
+            } catch (e) {
+                return alert('effect_params — некорректный JSON: ' + e.message);
+            }
+        }
+    }
+
+    const { error } = await supabaseClient.from('player_cards').update(patch).eq('id', cardId);
     if (error) return alert('Ошибка: ' + error.message);
     updateGameDynamic();
 }
