@@ -164,7 +164,7 @@ textarea { resize: vertical; min-height: 80px; }
    Стол/бейджи/лента событий пересобираются целиком каждый тик — анимации
    на них перезапускались с нуля каждый раз и били в глаза, поэтому убраны.
    ============================================================ */
-.ptable-card{ transition: transform .18s ease, box-shadow .18s ease, opacity .3s ease; }
+.ptable-card{ transition: transform .18s ease; }
 .ptable-card:hover{ transform: translateY(-2px); }
 
 @keyframes ae-phase-banner{
