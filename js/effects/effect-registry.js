@@ -141,6 +141,25 @@
       : `${ctx.player.name || 'Игрок'} заблокировал(а) использование багажа.`
   });
 
+  // «Двойной багаж» — при краже багажа предмет ДОБАВЛЯЕТСЯ к уже имеющемуся у вора
+  // (список в одной карте), а не затирает его. Для остальных категорий (профессия,
+  // здоровье и т.д.) поведение прежнее — замена, там список смысла не имеет.
+  function isLuggageCategory(category) {
+    return category === 'luggage_big' || category === 'luggage_small';
+  }
+  function parseLootList(text) {
+    if (!text) return [];
+    return String(text).split('\n').map(s => s.replace(/^•\s*/, '').trim()).filter(Boolean);
+  }
+  function formatLootList(items) {
+    return items.map(i => `• ${i}`).join('\n');
+  }
+  function mergeIntoLoot(existingText, incomingText) {
+    const items = parseLootList(existingText);
+    const incoming = parseLootList(incomingText);
+    return formatLootList([...items, ...incoming]);
+  }
+
   E.register('steal_trait', async ctx => {
     const target = targetId(ctx);
     const selected = await pickTrait(ctx, target, 'ОГРАБЛЕНИЕ — какую открытую характеристику забрать?');
@@ -151,9 +170,12 @@
 
     const mine = await getOwnTrait(ctx, selected.category);
     if (!mine) throw new Error(`У вас нет характеристики категории «${selected.category}».`);
+    const luggage = isLuggageCategory(selected.category);
 
     const mineSnap = { text: mine.text, value: mine.value, revealed: mine.revealed };
-    const stolenSnap = { text: selected.text, value: selected.value, revealed: true };
+    const stolenSnap = luggage
+      ? { text: mergeIntoLoot(mine.text, selected.text), value: mine.value, revealed: true }
+      : { text: selected.text, value: selected.value, revealed: true };
     try {
       await patchCard(ctx, mine.id, stolenSnap);
       await patchCard(ctx, selected.id, { text: '[Характеристика украдена]', value: 0, revealed: true });
@@ -214,10 +236,13 @@
     if (!mine) throw new Error(`У вас нет характеристики категории «${category}».`);
     const selected = (await playerCards(ctx, target)).find(c => c.category === category);
     if (!selected) throw new Error('У цели больше нет такой характеристики.');
+    const luggage = isLuggageCategory(category);
 
     const mineSnap = { text: mine.text, value: mine.value, revealed: mine.revealed };
     try {
-      await patchCard(ctx, mine.id, { text: selected.text, value: selected.value, revealed: mine.revealed });
+      await patchCard(ctx, mine.id, luggage
+        ? { text: mergeIntoLoot(mine.text, selected.text), value: mine.value, revealed: mine.revealed }
+        : { text: selected.text, value: selected.value, revealed: mine.revealed });
       await patchCard(ctx, selected.id, { text: '[Характеристика украдена]', value: 0, revealed: false });
       await db(ctx).from('round_effects').insert({
         room_code: roomCode(ctx), round: 0, effect_key: 'trait_history',
@@ -270,10 +295,13 @@
     if (!mine) throw new Error(`У вас нет характеристики категории «${category}».`);
     const selected = (await playerCards(ctx, target)).find(c => c.category === category);
     if (!selected) throw new Error(`У цели нет характеристики категории «${category}».`);
+    const luggage = isLuggageCategory(category);
 
     const mineSnap = { text: mine.text, value: mine.value, revealed: mine.revealed };
     try {
-      await patchCard(ctx, mine.id, { text: selected.text, value: selected.value, revealed: mine.revealed });
+      await patchCard(ctx, mine.id, luggage
+        ? { text: mergeIntoLoot(mine.text, selected.text), value: mine.value, revealed: mine.revealed }
+        : { text: selected.text, value: selected.value, revealed: mine.revealed });
       await patchCard(ctx, selected.id, { text: '[Характеристика украдена]', value: 0, revealed: false });
       await db(ctx).from('round_effects').insert({
         room_code: roomCode(ctx), round: 0, effect_key: 'trait_history',
@@ -995,7 +1023,7 @@
   /* ---- Реальная очередь хода в фазе открытия — вместо нарратива ---- */
 
   async function currentRevealOrderIds(ctx, forRound) {
-    const base = ctx.players.filter(p => p.id !== ctx.room.host_id).map(p => p.id);
+    const base = ctx.players.filter(p => p.id !== ctx.room.host_id && p.is_alive !== false).map(p => p.id);
     const override = ctx.room.reveal_order_override;
     if (override && override.round === forRound && Array.isArray(override.order)) {
       const ordered = override.order.filter(id => base.includes(id));
