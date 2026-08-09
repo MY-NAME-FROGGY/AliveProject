@@ -185,3 +185,10 @@ textarea { resize: vertical; min-height: 80px; }
 @media (prefers-reduced-motion: reduce){
   .panel[style*="border-left:6px solid"], .card-row.revealed, .card-row.my-revealed{ animation:none !important; }
 }
+/* Отключаем любые анимации/переходы у часто перерисовываемых статусов и хроники событий */
+.badge, .badge-ready, .badge-notready, .badge-muted, .badge-timeout,
+.host-badge, .player-list li, .events-feed, .events-feed li,
+.ptable-card-body .badge, .ptable-card-body .muted-note {
+    animation: none !important;
+    transition: none !important;
+}
