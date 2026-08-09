@@ -47,12 +47,8 @@
       const targets = Array.isArray(ctx.targets) ? ctx.targets : [];
       validateTargetCount(targetType, targets);
 
-      const result = await entry.handler({
-        ...ctx,
-        targetType,
-        effectKey: key,
-        params: card.effect_params || {}
-      });
+      const enrichedCtx = { ...ctx, targetType, effectKey: key, params: card.effect_params || {} };
+      const result = await entry.handler(enrichedCtx);
 
       if (result === false || result?.cancelled) return { success: false, cancelled: true };
       if (result?.success === false) throw new Error(result.error || 'Эффект не выполнен');
@@ -84,7 +80,7 @@
       await insertEvent(ctx, {
         type: entry.meta.eventType || 'neutral',
         text: entry.meta.eventText
-          ? entry.meta.eventText(ctx, result)
+          ? entry.meta.eventText(enrichedCtx, result)
           : `${ctx.player.name || 'Игрок'} использовал(а) спецусловие: ${card.text}`,
         targetId: targetIds[0] || null
       });
