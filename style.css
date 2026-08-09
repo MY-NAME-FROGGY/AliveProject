@@ -104,7 +104,7 @@ textarea { resize: vertical; min-height: 80px; }
 .ptable-avatar{width:32px; height:32px; border-radius:50%; background:#2a2d1c; border:1px solid #4a4e28; flex-shrink:0; display:flex; align-items:center; justify-content:center; font-size:17px; line-height:1;}
 .ptable-name{font-weight:600; font-size:13px; text-align:right; overflow-wrap:anywhere;}
 .ptable-card-body{flex:1; display:flex; flex-direction:column; gap:4px; align-items:flex-start;}
-.ptable-trait{font-size:12px; line-height:1.3; color:#b7b190;}
+.ptable-trait{font-size:12px; line-height:1.3; color:#b7b190; white-space:pre-line;}
 .ptable-trait-cat{color:var(--hazard); font-weight:bold; font-size:10px; text-transform:uppercase;}
 .ptable-card-actions{display:flex; gap:4px; flex-wrap:wrap; margin-top:4px;}
 
@@ -115,7 +115,7 @@ textarea { resize: vertical; min-height: 80px; }
 .card-row.revealed{border-left-color:var(--ok); background:rgba(91,138,74,0.08);}
 .card-row.my-revealed{border-left-color:var(--hazard); background:rgba(211,160,38,0.08);}
 .card-row-cat{font-size:11px; color:var(--hazard); text-transform:uppercase; min-width:90px; flex-shrink:0; padding-top:2px; font-weight:bold;}
-.card-row-text{font-size:13px; color:var(--paper); text-align:right; flex:1;}
+.card-row-text{font-size:13px; color:var(--paper); text-align:right; flex:1; white-space:pre-line;}
 .card-row-hidden{color:#555; font-style:italic;}
 .card-row-btn{flex-shrink:0; align-self:center;}
 
@@ -159,28 +159,13 @@ textarea { resize: vertical; min-height: 80px; }
 @media(max-width:600px){.alive-effect-modal{align-items:flex-end;padding:8px}.alive-effect-box{max-height:92vh;border-radius:10px 10px 5px 5px;padding:18px}.alive-effect-actions{display:grid;grid-template-columns:1fr 1fr}.alive-effect-actions .btn{width:100%}}
 
 /* ============================================================
-   АНИМАЦИИ — держим лёгкими и по делу, не перегружаем интерфейс
+   АНИМАЦИИ — только на элементах, которые перерисовываются исключительно
+   при реальном изменении данных (не на каждый 2-сек. тик поллинга).
+   Стол/бейджи/лента событий пересобираются целиком каждый тик — анимации
+   на них перезапускались с нуля каждый раз и били в глаза, поэтому убраны.
    ============================================================ */
-@keyframes ae-pulse-glow{
-  0%,100%{ box-shadow:0 0 0 2px var(--hazard) inset, 0 0 0 rgba(211,160,38,0); }
-  50%{ box-shadow:0 0 0 2px var(--hazard) inset, 0 0 14px rgba(211,160,38,.55); }
-}
 .ptable-card{ transition: transform .18s ease, box-shadow .18s ease, opacity .3s ease; }
-.ptable-card.speaking{ animation: ae-pulse-glow 1.8s ease-in-out infinite; }
-.ptable-card.nominated{ animation: ae-pulse-glow 2.4s ease-in-out infinite; }
 .ptable-card:hover{ transform: translateY(-2px); }
-
-@keyframes ae-eliminate-fade{
-  0%{ opacity:1; filter:grayscale(0); transform:scale(1); }
-  100%{ opacity:.45; filter:grayscale(1); transform:scale(.98); }
-}
-.ptable-card.eliminated{ animation: ae-eliminate-fade .6s ease forwards; }
-
-@keyframes ae-feed-in{
-  from{ opacity:0; transform:translateX(-8px); }
-  to{ opacity:1; transform:translateX(0); }
-}
-.events-feed li{ animation: ae-feed-in .35s ease-out; }
 
 @keyframes ae-phase-banner{
   from{ opacity:0; transform:translateY(-6px); }
@@ -194,19 +179,9 @@ textarea { resize: vertical; min-height: 80px; }
 }
 .card-row.revealed, .card-row.my-revealed{ animation: ae-card-reveal .35s ease-out; transform-origin:top center; }
 
-@keyframes ae-countdown-pulse{
-  0%,100%{ transform:scale(1); }
-  50%{ transform:scale(1.04); }
-}
-#gamePhaseCountdown{ display:inline-block; animation: ae-countdown-pulse 1s ease-in-out infinite; }
-
 .btn{ transition: transform .12s ease, opacity .2s ease, background-color .2s ease; }
 .btn:active{ transform: scale(.96); }
 
-.badge{ animation: ae-feed-in .25s ease-out; }
-
 @media (prefers-reduced-motion: reduce){
-  .ptable-card.speaking, .ptable-card.nominated, .ptable-card.eliminated,
-  .events-feed li, .panel[style*="border-left:6px solid"], .card-row.revealed,
-  .card-row.my-revealed, #gamePhaseCountdown, .badge{ animation:none !important; }
+  .panel[style*="border-left:6px solid"], .card-row.revealed, .card-row.my-revealed{ animation:none !important; }
 }
