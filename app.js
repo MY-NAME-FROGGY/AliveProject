@@ -1335,6 +1335,8 @@ function renderGameTable() {
                     <div id="hostStrip"></div>
                     <div class="ptable-grid" id="gamePlayersList"></div>
                 </div>
+            </div>
+            <div class="game-aside">
                 ${isHost ? renderHostToolsPanel(room) : `<div class="panel" id="myCardPanel">
                     <h2>Моя карточка</h2>
                     <p class="muted-note">Загрузка...</p>
@@ -1750,6 +1752,7 @@ function renderHostPhaseControls(room, hasTimer) {
 async function updateGameDynamic() {
     const room = state.room;
     if (!room) return;
+    const isHost = room.host_id === state.playerId;
 
     const nominees = room.nominees || [];
     const defenseIdx = room.defense_index || 0;
@@ -1798,6 +1801,14 @@ async function updateGameDynamic() {
                 }
             }
 
+            const isTimedOut = p.timeout_until && new Date(p.timeout_until) > new Date();
+            const modBadges = `${p.is_muted ? '<span class="badge badge-muted">Мут</span>' : ''}${isTimedOut ? '<span class="badge badge-timeout">Таймаут</span>' : ''}`;
+            const modControls = (isHost && !isMe) ? `
+                <div style="display:flex; gap:4px; margin-top:4px;">
+                    <button class="btn btn-ghost btn-sm" onclick="actionToggleMute('${p.id}', ${p.is_muted})">${p.is_muted ? 'Размутить' : 'Мут'}</button>
+                    <button class="btn btn-ghost btn-sm" onclick="actionTimeout('${p.id}', '${escapeHtml(p.name)}')">Таймаут</button>
+                </div>` : '';
+
             return `<div class="ptable-card${isSpeaking ? ' speaking' : ''}${isNominated ? ' nominated' : ''}${isEliminated ? ' eliminated' : ''}">
                 <div class="ptable-card-head">
                     ${avatarChip(p)}
@@ -1807,11 +1818,13 @@ async function updateGameDynamic() {
                     ${traitsHtml}
                     ${isEliminated ? '<span class="badge badge-muted">Выбыл(а)</span>' : ''}
                     ${isNominated && !isEliminated ? '<span class="badge badge-timeout">Выставлен(а)</span>' : ''}
+                    ${modBadges}
                     ${myNomination === p.id ? '<span class="muted-note">Ваш выбор</span>' : ''}
                     ${canNominate ? `<button class="btn btn-ghost btn-sm" onclick="actionNominate('${p.id}')">Выставить</button>` : ''}
                     ${state.myVoteThisRound === p.id ? '<span class="muted-note">Ваш голос</span>' : ''}
                     ${canVote ? `<button class="btn btn-ghost btn-sm" onclick="actionCastVote('${p.id}')">Голосовать</button>` : ''}
                     ${finalRevealHtml}
+                    ${modControls}
                 </div>
             </div>`;
         }).join('');
