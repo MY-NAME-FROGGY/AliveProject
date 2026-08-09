@@ -192,3 +192,15 @@ textarea { resize: vertical; min-height: 80px; }
     animation: none !important;
     transition: none !important;
 }
+/* Финальный вердикт */
+.verdict-display{text-align:center; padding:18px 10px;}
+.verdict-icon{font-size:56px; line-height:1; margin-bottom:8px;}
+.verdict-label{font-family:'Arial Black',sans-serif; font-size:30px; letter-spacing:0.12em; text-transform:uppercase; margin-bottom:14px;}
+.verdict-win .verdict-label{color:var(--ok); text-shadow:0 0 18px rgba(91,138,74,0.45);}
+.verdict-loss .verdict-label{color:var(--danger); text-shadow:0 0 18px rgba(166,61,47,0.45);}
+.verdict-percent-container{position:relative; width:100%; max-width:420px; height:28px; background:var(--void); border:1px solid #4a4e28; border-radius:14px; margin:14px auto; overflow:hidden;}
+.verdict-percent-bar{height:100%; background:linear-gradient(90deg, var(--danger), var(--hazard), var(--ok)); border-radius:14px;}
+.verdict-percent-text{position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); font-weight:bold; font-size:13px; color:#fff; text-shadow:0 1px 3px rgba(0,0,0,0.8); white-space:nowrap;}
+.survivors-list{margin-top:16px; font-size:16px;}
+.survivors-label{display:block; color:#888; font-size:12px; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:4px;}
+.verdict-controls{margin-top:14px; border-top:1px solid #33361f; padding-top:12px;}
