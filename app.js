@@ -1371,11 +1371,28 @@ function renderFinalPhaseTable() {
                 : (room.final_reveal_unlocked
                     ? '<p class="muted-note">Можно открыть последнюю характеристику — кнопка на своей карточке за столом ниже.</p>'
                     : '<p class="muted-note">Обсудите с ведущим вслух свои шансы на выживание.</p>'));
-    } else {
-        const survivors = state.players.filter(p => p.id !== room.host_id && p.is_alive !== false);
-        const verdictLabel = room.verdict === 'victory' ? '🏆 ПОБЕДА' : (room.verdict === 'defeat' ? '💀 ПОРАЖЕНИЕ' : '');
-        phaseBody = `<p style="font-size:22px; margin-bottom:6px;">${verdictLabel}</p><p>Выжившие: <strong>${survivors.map(p => escapeHtml(p.name)).join(', ') || 'никто'}</strong></p>`;
-    }
+     } else {
+     const survivors = state.players.filter(p => p.id !== room.host_id && p.is_alive !== false);
+     const isVictory = room.verdict === 'victory';
+     const isDefeat = room.verdict === 'defeat';
+     const verdictLabel = isVictory ? 'ПОБЕДА' : (isDefeat ? 'ПОРАЖЕНИЕ' : 'ВЕРДИКТ');
+     const verdictClass = isVictory ? 'verdict-win' : (isDefeat ? 'verdict-loss' : '');
+     const percent = (room.verdict_percent !== null && room.verdict_percent !== undefined) ? room.verdict_percent : null;
+     phaseBody = `
+       <div class="verdict-display ${verdictClass}">
+         <div class="verdict-icon">${isVictory ? '🏆' : (isDefeat ? '💀' : '⚖️')}</div>
+         <div class="verdict-label">${verdictLabel}</div>
+         ${percent !== null ? `
+           <div class="verdict-percent-container">
+             <div class="verdict-percent-bar" style="width:${percent}%"></div>
+             <span class="verdict-percent-text">${percent}% шанс выжить</span>
+           </div>` : ''}
+         <div class="survivors-list">
+           <span class="survivors-label">Выжившие</span>
+           <strong>${survivors.map(p => escapeHtml(p.name)).join(', ') || 'никто'}</strong>
+         </div>
+       </div>`;
+ }
 
     let hostControls = '';
     if (isHost && room.current_phase === 'awaiting_verdict') {
