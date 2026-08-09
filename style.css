@@ -8,6 +8,8 @@ h1 { color: var(--hazard); font-size: 2.5rem;  text-align: center; margin-bottom
 h1 span { color: var(--paper); }
 
 .wrap{max-width:1280px;margin:0 auto;}
+@media (min-width: 1400px){ .wrap{max-width:1560px;} }
+@media (min-width: 1800px){ .wrap{max-width:1800px;} }
 
 .hazard-strip{height:10px;background:repeating-linear-gradient(135deg,var(--hazard) 0 18px,#211d13 18px 36px);border-radius:2px;margin:14px 0 22px;}
 
@@ -76,11 +78,18 @@ textarea { resize: vertical; min-height: 80px; }
 .muted-note{color:#888;font-size:13px;}
 
 /* Игровой стол */
-.game-layout{display:grid; grid-template-columns:280px 1fr; gap:16px; align-items:start;}
+.game-layout{display:grid; grid-template-columns:260px 1fr; gap:16px; align-items:start;}
 .game-sidebar{display:flex; flex-direction:column;}
-.game-main{display:flex; flex-direction:column;}
+.game-main{display:flex; flex-direction:column; min-width:0;}
+.game-aside{display:flex; flex-direction:column; min-width:0;}
+
+@media (min-width: 1180px){
+  /* На широких экранах стол и правая панель (моя карточка / инструменты ведущего) —
+     колонки рядом, а не друг под другом. Это и убирает основную лишнюю высоту. */
+  .game-layout{grid-template-columns:260px minmax(0,1.5fr) minmax(340px,1fr);}
+}
 @media (max-width: 760px){
-.game-layout{grid-template-columns:1fr;}
+  .game-layout{grid-template-columns:1fr;}
 }
 
 .host-strip{background:var(--void); border:2px solid #9b7fd4; border-radius:6px; padding:10px 14px; margin-bottom:14px; display:flex; align-items:center; gap:10px;}
@@ -148,3 +157,56 @@ textarea { resize: vertical; min-height: 80px; }
 .alive-effect-warning{padding:10px 12px;border-left:3px solid var(--danger);background:rgba(166,61,47,.08);color:#c8a49d;font-size:12px;line-height:1.4;margin-top:12px}
 .alive-effect-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
 @media(max-width:600px){.alive-effect-modal{align-items:flex-end;padding:8px}.alive-effect-box{max-height:92vh;border-radius:10px 10px 5px 5px;padding:18px}.alive-effect-actions{display:grid;grid-template-columns:1fr 1fr}.alive-effect-actions .btn{width:100%}}
+
+/* ============================================================
+   АНИМАЦИИ — держим лёгкими и по делу, не перегружаем интерфейс
+   ============================================================ */
+@keyframes ae-pulse-glow{
+  0%,100%{ box-shadow:0 0 0 2px var(--hazard) inset, 0 0 0 rgba(211,160,38,0); }
+  50%{ box-shadow:0 0 0 2px var(--hazard) inset, 0 0 14px rgba(211,160,38,.55); }
+}
+.ptable-card{ transition: transform .18s ease, box-shadow .18s ease, opacity .3s ease; }
+.ptable-card.speaking{ animation: ae-pulse-glow 1.8s ease-in-out infinite; }
+.ptable-card.nominated{ animation: ae-pulse-glow 2.4s ease-in-out infinite; }
+.ptable-card:hover{ transform: translateY(-2px); }
+
+@keyframes ae-eliminate-fade{
+  0%{ opacity:1; filter:grayscale(0); transform:scale(1); }
+  100%{ opacity:.45; filter:grayscale(1); transform:scale(.98); }
+}
+.ptable-card.eliminated{ animation: ae-eliminate-fade .6s ease forwards; }
+
+@keyframes ae-feed-in{
+  from{ opacity:0; transform:translateX(-8px); }
+  to{ opacity:1; transform:translateX(0); }
+}
+.events-feed li{ animation: ae-feed-in .35s ease-out; }
+
+@keyframes ae-phase-banner{
+  from{ opacity:0; transform:translateY(-6px); }
+  to{ opacity:1; transform:translateY(0); }
+}
+.panel[style*="border-left:6px solid"]{ animation: ae-phase-banner .4s ease-out; }
+
+@keyframes ae-card-reveal{
+  0%{ transform:rotateX(90deg); opacity:0; }
+  100%{ transform:rotateX(0deg); opacity:1; }
+}
+.card-row.revealed, .card-row.my-revealed{ animation: ae-card-reveal .35s ease-out; transform-origin:top center; }
+
+@keyframes ae-countdown-pulse{
+  0%,100%{ transform:scale(1); }
+  50%{ transform:scale(1.04); }
+}
+#gamePhaseCountdown{ display:inline-block; animation: ae-countdown-pulse 1s ease-in-out infinite; }
+
+.btn{ transition: transform .12s ease, opacity .2s ease, background-color .2s ease; }
+.btn:active{ transform: scale(.96); }
+
+.badge{ animation: ae-feed-in .25s ease-out; }
+
+@media (prefers-reduced-motion: reduce){
+  .ptable-card.speaking, .ptable-card.nominated, .ptable-card.eliminated,
+  .events-feed li, .panel[style*="border-left:6px solid"], .card-row.revealed,
+  .card-row.my-revealed, #gamePhaseCountdown, .badge{ animation:none !important; }
+}
