@@ -1949,28 +1949,23 @@ async function actionToggleScenarioVisible() {
 }
 
 function canRevealCategory(card, room, category) {
-    if (category === 'goal') return { ok: false, reason: 'Цель нельзя открывать другим игрокам.' };
-    
-    const roundIdx = (room.current_round || 1) - 1;
-    const slots = (room.settings?.round_reveals || [])[roundIdx] || ['any'];
-    const limit = slots.length;
-
-    const usedThisRound = card.filter(c => c.round_revealed === room.current_round).length;
-    if (usedThisRound >= limit) return { ok: false, reason: 'Лимит открытий на этот раунд исчерпан (' + limit + ').' };
-
-    const alreadyRevealedCats = new Set(card.filter(c => c.revealed).map(c => c.category));
-    const specificSlotCats = slots.filter(s => s !== 'any');
-    const pendingRequired = specificSlotCats.filter(s => !alreadyRevealedCats.has(s));
-
-    if (pendingRequired.includes(category)) return { ok: true };
-
-    const thisRoundCards = card.filter(c => c.round_revealed === room.current_round);
-    const usedAnyThisRound = thisRoundCards.filter(c => !specificSlotCats.includes(c.category)).length;
-    const anySlotsTotal = slots.filter(s => s === 'any').length;
-
-    if (usedAnyThisRound < anySlotsTotal) return { ok: true };
-
-    return { ok: false, reason: 'В этом раунде такой тип характеристики недоступен.' };
+// Спец.условие — карта-действие: НЕ занимает слот раскрытия и не считается в лимите раунда.
+if (category === 'special_condition') return { ok: true };
+if (category === 'goal') return { ok: false, reason: 'Цель нельзя открывать другим игрокам.' };
+const roundIdx = (room.current_round || 1) - 1;
+const slots = (room.settings?.round_reveals || [])[roundIdx] || ['any'];
+const limit = slots.length;
+const usedThisRound = card.filter(c => c.round_revealed === room.current_round && c.category !== 'special_condition').length;
+if (usedThisRound >= limit) return { ok: false, reason: 'Лимит открытий на этот раунд исчерпан (' + limit + ').' };
+const alreadyRevealedCats = new Set(card.filter(c => c.revealed && c.category !== 'special_condition').map(c => c.category));
+const specificSlotCats = slots.filter(s => s !== 'any');
+const pendingRequired = specificSlotCats.filter(s => !alreadyRevealedCats.has(s));
+if (pendingRequired.includes(category)) return { ok: true };
+const thisRoundCards = card.filter(c => c.round_revealed === room.current_round && c.category !== 'special_condition');
+const usedAnyThisRound = thisRoundCards.filter(c => !specificSlotCats.includes(c.category)).length;
+const anySlotsTotal = slots.filter(s => s === 'any').length;
+if (usedAnyThisRound < anySlotsTotal) return { ok: true };
+return { ok: false, reason: 'В этом раунде такой тип характеристики недоступен.' };
 }
 
 async function loadMyCard() {
