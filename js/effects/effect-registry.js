@@ -755,8 +755,10 @@
   // «Вклад» — досрочно открыть (внести в общий доступ) один ещё не раскрытый бонусный ресурс бункера.
   E.register('reveal_random_bonus_property', async ctx => {
     const props = await roomProperties(ctx);
-    const hidden = props.filter(p => p.type === 'bonus' && !p.revealed);
-    if (!hidden.length) throw new Error('Все бонусные свойства бункера уже раскрыты — вносить нечего.');
+    const r = round(ctx);
+    const hidden = props.filter(p => p.type === 'bonus' && !p.revealed &&
+      !(p.blocked && (p.blocked_until_round == null || p.blocked_until_round >= r)));
+    if (!hidden.length) throw new Error('Все бонусные свойства бункера уже раскрыты (или заблокированы) — вносить нечего.');
     const pick = hidden[Math.floor(Math.random() * hidden.length)];
     const { error } = await db(ctx).from('room_bunker_properties')
       .update({ revealed: true, available: true }).eq('id', pick.id);
@@ -764,17 +766,21 @@
     return { text: pick.text };
   }, { targetType: 'self', eventType: 'positive', eventText: (ctx, r) => `${ctx.player.name || 'Игрок'} внёс(ла) в общий доступ бункера: «${r?.text}».` });
 
-  // «Диверсия: тайник с едой» — безвозвратно уничтожить один уже доступный бонусный ресурс.
+  // «Диверсия: тайник с едой» — переводит уже доступный бонусный ресурс в статус «заблокировано»
+  // (та же семантика blocked/blocked_until_round, что использует RPC-блокировка комнат бункера
+  // и Мастер-панель ведущего — единый источник истины вместо отдельного available:false).
   E.register('destroy_random_bonus_property', async ctx => {
     const props = await roomProperties(ctx);
-    const available = props.filter(p => p.type === 'bonus' && p.revealed && p.available !== false);
+    const r = round(ctx);
+    const available = props.filter(p => p.type === 'bonus' && p.revealed && p.available !== false &&
+      !(p.blocked && (p.blocked_until_round == null || p.blocked_until_round >= r)));
     if (!available.length) return { text: null };
     const pick = available[Math.floor(Math.random() * available.length)];
     const { error } = await db(ctx).from('room_bunker_properties')
-      .update({ available: false }).eq('id', pick.id);
+      .update({ blocked: true, blocked_until_round: null }).eq('id', pick.id);
     if (error) throw error;
     return { text: pick.text };
-  }, { targetType: 'self', eventType: 'negative', eventText: (ctx, r) => r?.text ? `${ctx.player.name || 'Игрок'} уничтожил(а) в бункере: «${r.text}» — ресурс потерян безвозвратно.` : 'В бункере не нашлось доступного ресурса для уничтожения — эффект пропал впустую.' });
+  }, { targetType: 'self', eventType: 'negative', eventText: (ctx, r) => r?.text ? `${ctx.player.name || 'Игрок'} уничтожил(а) в бункере: «${r.text}» — ресурс заблокирован безвозвратно.` : 'В бункере не нашлось доступного ресурса для уничтожения — эффект пропал впустую.' });
 
   // «Перестройка» — добавить в комнату случайное bonus-свойство бункера из общего каталога, которого у неё ещё нет.
   E.register('add_random_room', async ctx => {
