@@ -241,8 +241,8 @@
     const mineSnap = { text: mine.text, value: mine.value, revealed: mine.revealed };
     try {
       await patchCard(ctx, mine.id, luggage
-        ? { text: mergeIntoLoot(mine.text, selected.text), value: mine.value, revealed: mine.revealed }
-        : { text: selected.text, value: selected.value, revealed: mine.revealed });
+        ? { text: mergeIntoLoot(mine.text, selected.text), value: mine.value, revealed: mine.revealed && selected.revealed }
+        : { text: selected.text, value: selected.value, revealed: selected.revealed });
       await patchCard(ctx, selected.id, { text: '[Характеристика украдена]', value: 0, revealed: false });
       await db(ctx).from('round_effects').insert({
         room_code: roomCode(ctx), round: 0, effect_key: 'trait_history',
@@ -258,6 +258,8 @@
   }, { targetType: 'one', eventType: 'negative', eventText: (ctx, r) => `${ctx.player.name || 'Игрок'} совершил(а) ограбление вслепую (категория «${r?.changedCategory}») — содержимое не разглашается.` });
 
   // «Обмен вслепую» — обе стороны меняются категорией не зная, что получат.
+  // Статус открытости/закрытости едет ВМЕСТЕ с содержимым (как и в открытом обмене) —
+  // если у одного было открыто, а у другого закрыто, после обмена они меняются местами.
   E.register('swap_trait_blind', async ctx => {
     const target = targetId(ctx);
     const category = await pickCategoryBlind(ctx, target, 'ОБМЕН ВСЛЕПУЮ — выберите категорию');
@@ -269,16 +271,7 @@
     if (!mine) throw new Error(`У вас нет характеристики категории «${category}».`);
     const selected = (await playerCards(ctx, target)).find(c => c.category === category);
     if (!selected) throw new Error('У цели больше нет такой характеристики.');
-    // revealed-статус каждой стороны остаётся как был — обмен слепой, но не меняет, кто что публично показывал.
-    const mineSnap = { text: mine.text, value: mine.value, revealed: mine.revealed };
-    const theirSnap = { text: selected.text, value: selected.value, revealed: selected.revealed };
-    try {
-      await patchCard(ctx, mine.id, { text: theirSnap.text, value: theirSnap.value, revealed: mineSnap.revealed });
-      await patchCard(ctx, selected.id, { text: mineSnap.text, value: mineSnap.value, revealed: theirSnap.revealed });
-    } catch (error) {
-      try { await patchCard(ctx, mine.id, mineSnap); } catch (_) {}
-      throw error;
-    }
+    await swapSnapshots(ctx, mine, selected);
     return { changedCategory: category, targetPlayerId: target };
   }, { targetType: 'one', eventType: 'neutral', eventText: (ctx, r) => `${ctx.player.name || 'Игрок'} провёл(а) обмен вслепую (категория «${r?.changedCategory}») с выбранным игроком.` });
 
@@ -300,8 +293,8 @@
     const mineSnap = { text: mine.text, value: mine.value, revealed: mine.revealed };
     try {
       await patchCard(ctx, mine.id, luggage
-        ? { text: mergeIntoLoot(mine.text, selected.text), value: mine.value, revealed: mine.revealed }
-        : { text: selected.text, value: selected.value, revealed: mine.revealed });
+        ? { text: mergeIntoLoot(mine.text, selected.text), value: mine.value, revealed: mine.revealed && selected.revealed }
+        : { text: selected.text, value: selected.value, revealed: selected.revealed });
       await patchCard(ctx, selected.id, { text: '[Характеристика украдена]', value: 0, revealed: false });
       await db(ctx).from('round_effects').insert({
         room_code: roomCode(ctx), round: 0, effect_key: 'trait_history',
