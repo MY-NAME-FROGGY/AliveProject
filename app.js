@@ -1211,7 +1211,7 @@ function backToLobby() {
 // Если карта спецусловия сохранила переопределение на этот раунд (rooms.reveal_order_override),
 // используем его — так реально работают «Обмен очередью хода», «Открывает последним» и т.п.
 function getRevealOrder(room, players) {
-    const base = players.filter(p => p.id !== room.host_id);
+    const base = players.filter(p => p.id !== room.host_id && p.is_alive !== false);
     const override = room.reveal_order_override;
     if (override && override.round === (room.current_round || 1) && Array.isArray(override.order)) {
         const byId = new Map(base.map(p => [p.id, p]));
@@ -1371,51 +1371,28 @@ function renderFinalPhaseTable() {
                 : (room.final_reveal_unlocked
                     ? '<p class="muted-note">Можно открыть последнюю характеристику — кнопка на своей карточке за столом ниже.</p>'
                     : '<p class="muted-note">Обсудите с ведущим вслух свои шансы на выживание.</p>'));
-     } else {
-     const survivors = state.players.filter(p => p.id !== room.host_id && p.is_alive !== false);
-     const isVictory = room.verdict === 'victory';
-     const isDefeat = room.verdict === 'defeat';
-     const verdictLabel = isVictory ? 'ПОБЕДА' : (isDefeat ? 'ПОРАЖЕНИЕ' : 'ВЕРДИКТ');
-     const verdictClass = isVictory ? 'verdict-win' : (isDefeat ? 'verdict-loss' : '');
-     const percent = (room.verdict_percent !== null && room.verdict_percent !== undefined) ? room.verdict_percent : null;
-     phaseBody = `
-       <div class="verdict-display ${verdictClass}">
-         <div class="verdict-icon">${isVictory ? '🏆' : (isDefeat ? '💀' : '⚖️')}</div>
-         <div class="verdict-label">${verdictLabel}</div>
-         ${percent !== null ? `
-           <div class="verdict-percent-container">
-             <div class="verdict-percent-bar" style="width:${percent}%"></div>
-             <span class="verdict-percent-text">${percent}% шанс выжить</span>
-           </div>` : ''}
-         <div class="survivors-list">
-           <span class="survivors-label">Выжившие</span>
-           <strong>${survivors.map(p => escapeHtml(p.name)).join(', ') || 'никто'}</strong>
-         </div>
-       </div>`;
- }
+    } else {
+        const survivors = state.players.filter(p => p.id !== room.host_id && p.is_alive !== false);
+        const verdictLabel = room.verdict === 'victory' ? '🏆 ПОБЕДА' : (room.verdict === 'defeat' ? '💀 ПОРАЖЕНИЕ' : '');
+        phaseBody = `<p style="font-size:22px; margin-bottom:6px;">${verdictLabel}</p><p>Выжившие: <strong>${survivors.map(p => escapeHtml(p.name)).join(', ') || 'никто'}</strong></p>`;
+    }
 
     let hostControls = '';
     if (isHost && room.current_phase === 'awaiting_verdict') {
-             hostControls = `
-         <div class="verdict-controls">
-             <div class="settings-field wide" style="margin-top:10px;">
-                 <label><input type="checkbox" id="finalRevealToggle" onchange="actionToggleFinalReveal()" ${room.final_reveal_unlocked ? 'checked' : ''} style="width:auto;display:inline-block;margin-right:6px;vertical-align:middle;">Разрешить игрокам открыть последнюю характеристику</label>
-             </div>
-             <div style="margin-top:10px; display:flex; gap:8px; justify-content:center; flex-wrap:wrap;">
-                 <button class="btn ${room.verdict === 'victory' ? 'btn-primary' : 'btn-ghost'}" onclick="actionSetVerdictChoice('victory')">Победа</button>
-                 <button class="btn ${room.verdict === 'defeat' ? 'btn-danger' : 'btn-ghost'}" onclick="actionSetVerdictChoice('defeat')">Поражение</button>
-             </div>
-             <div style="margin-top:12px;">
-                 <label class="muted-note" style="display:block; margin-bottom:6px;">Шанс выжить</label>
-                 <div style="display:flex; align-items:center; gap:10px; justify-content:center;">
-                     <input type="range" id="verdictPercentRange" min="0" max="100" value="${room.verdict_percent ?? 50}" oninput="document.getElementById('verdictPercent').value=this.value" style="flex:1; max-width:220px;">
-                     <input type="number" id="verdictPercent" placeholder="%" min="0" max="100" value="${room.verdict_percent ?? ''}" oninput="document.getElementById('verdictPercentRange').value=this.value" style="width:80px; margin:0;"> %
-                 </div>
-             </div>
-             <p class="muted-note" style="margin-top:6px;">Кнопки и процент видны только вам, игроки их не видят.</p>
-             <button class="btn btn-danger" style="margin-top:12px; width:100%;" onclick="actionAnnounceVerdict()">ОГЛАСИТЬ ВЕРДИКТ</button>
-         </div>
-     `;
+        hostControls = `
+            <div class="settings-field wide" style="margin-top:10px;">
+                <label><input type="checkbox" id="finalRevealToggle" onchange="actionToggleFinalReveal()" ${room.final_reveal_unlocked ? 'checked' : ''} style="width:auto;display:inline-block;margin-right:6px;vertical-align:middle;">Разрешить игрокам открыть последнюю характеристику</label>
+            </div>
+            <div style="margin-top:10px; display:flex; gap:8px; justify-content:center; flex-wrap:wrap;">
+                <button class="btn ${room.verdict === 'victory' ? 'btn-primary' : 'btn-ghost'}" onclick="actionSetVerdictChoice('victory')">Победа</button>
+                <button class="btn ${room.verdict === 'defeat' ? 'btn-danger' : 'btn-ghost'}" onclick="actionSetVerdictChoice('defeat')">Поражение</button>
+            </div>
+            <div style="margin-top:8px;">
+                <input type="number" id="verdictPercent" placeholder="Шанс выжить" min="0" max="100" value="${room.verdict_percent ?? ''}" style="width:140px; display:inline-block; margin:0;"> %
+            </div>
+            <p class="muted-note" style="margin-top:6px;">Кнопки и процент видны только вам, игроки их не видят.</p>
+            <button class="btn btn-danger btn-sm" style="margin-top:10px;" onclick="actionAnnounceVerdict()">Огласить вердикт</button>
+        `;
     }
 
     document.getElementById('app').innerHTML = `
@@ -1945,18 +1922,13 @@ async function actionQuickEvent(kind) {
     const alivePlayers = state.players.filter(p => p.id !== room.host_id);
 
     if (kind === 'find') {
-        const revealed = room.revealed_bonus_ids || [];
-        const active = room.active_bonus_ids || [];
-        const remaining = active.filter(id => !revealed.includes(id));
-        if (remaining.length === 0) return alert('Все доступные бонусные свойства бункера уже открыты.');
-
-        const pick = remaining[Math.floor(Math.random() * remaining.length)];
-        await dbUpdateRoom(state.currentRoomCode, { revealed_bonus_ids: [...revealed, pick] });
+        const text = await hostRevealRandomBonusProperty();
+        if (!text) return alert('Все доступные бонусные свойства бункера уже открыты.');
         await dbInsertEvent(state.currentRoomCode, room.current_round, 'positive',
-            'Пока шло обсуждение, один из выживших обнаружил в дальнем углу бункера ещё один тайник — досрочно открыто дополнительное свойство бункера.', null, false);
-        state.room.revealed_bonus_ids = [...revealed, pick];
+            `Пока шло обсуждение, один из выживших обнаружил в дальнем углу бункера ещё один тайник — досрочно открыто: «${text}».`, null, false);
         refreshBunkerList();
-    refreshBunkerResources();
+        refreshBunkerResources();
+        if (typeof loadHostMasterPanel === 'function') loadHostMasterPanel();
     } else if (kind === 'incident') {
         if (alivePlayers.length === 0) return;
         const victim = alivePlayers[Math.floor(Math.random() * alivePlayers.length)];
@@ -1972,23 +1944,28 @@ async function actionToggleScenarioVisible() {
 }
 
 function canRevealCategory(card, room, category) {
-// Спец.условие — карта-действие: НЕ занимает слот раскрытия и не считается в лимите раунда.
-if (category === 'special_condition') return { ok: true };
-if (category === 'goal') return { ok: false, reason: 'Цель нельзя открывать другим игрокам.' };
-const roundIdx = (room.current_round || 1) - 1;
-const slots = (room.settings?.round_reveals || [])[roundIdx] || ['any'];
-const limit = slots.length;
-const usedThisRound = card.filter(c => c.round_revealed === room.current_round && c.category !== 'special_condition').length;
-if (usedThisRound >= limit) return { ok: false, reason: 'Лимит открытий на этот раунд исчерпан (' + limit + ').' };
-const alreadyRevealedCats = new Set(card.filter(c => c.revealed && c.category !== 'special_condition').map(c => c.category));
-const specificSlotCats = slots.filter(s => s !== 'any');
-const pendingRequired = specificSlotCats.filter(s => !alreadyRevealedCats.has(s));
-if (pendingRequired.includes(category)) return { ok: true };
-const thisRoundCards = card.filter(c => c.round_revealed === room.current_round && c.category !== 'special_condition');
-const usedAnyThisRound = thisRoundCards.filter(c => !specificSlotCats.includes(c.category)).length;
-const anySlotsTotal = slots.filter(s => s === 'any').length;
-if (usedAnyThisRound < anySlotsTotal) return { ok: true };
-return { ok: false, reason: 'В этом раунде такой тип характеристики недоступен.' };
+    if (category === 'goal') return { ok: false, reason: 'Цель нельзя открывать другим игрокам.' };
+    
+    const roundIdx = (room.current_round || 1) - 1;
+    const slots = (room.settings?.round_reveals || [])[roundIdx] || ['any'];
+    const limit = slots.length;
+
+    const usedThisRound = card.filter(c => c.round_revealed === room.current_round).length;
+    if (usedThisRound >= limit) return { ok: false, reason: 'Лимит открытий на этот раунд исчерпан (' + limit + ').' };
+
+    const alreadyRevealedCats = new Set(card.filter(c => c.revealed).map(c => c.category));
+    const specificSlotCats = slots.filter(s => s !== 'any');
+    const pendingRequired = specificSlotCats.filter(s => !alreadyRevealedCats.has(s));
+
+    if (pendingRequired.includes(category)) return { ok: true };
+
+    const thisRoundCards = card.filter(c => c.round_revealed === room.current_round);
+    const usedAnyThisRound = thisRoundCards.filter(c => !specificSlotCats.includes(c.category)).length;
+    const anySlotsTotal = slots.filter(s => s === 'any').length;
+
+    if (usedAnyThisRound < anySlotsTotal) return { ok: true };
+
+    return { ok: false, reason: 'В этом раунде такой тип характеристики недоступен.' };
 }
 
 async function loadMyCard() {
@@ -2357,17 +2334,15 @@ function refreshBunkerList() {
     const room = state.room || {};
     const capacity = Number(room.settings?.target_survivors || 1);
     const props = state.roomBunkerProperties || [];
-    const revealedIds = room.revealed_bonus_ids || [];
-    const bonus = state.gameScenario?.bonus || [];
-    const revealedItems = bonus.filter(b => revealedIds.includes(b.id));
 
     const blocked = props.filter(p => p.blocked && (p.blocked_until_round == null || p.blocked_until_round >= (room.current_round || 1)));
+    const revealedBonus = props.filter(p => p.type === 'bonus' && p.revealed && p.available !== false && !blocked.includes(p));
     const activeCount = props.filter(p => p.available !== false && !p.blocked).length;
 
     bunkerEl.innerHTML = `
         <li style="list-style:none; margin-bottom:8px;"><strong>Вместимость:</strong> ${capacity} чел.</li>
         ${blocked.length ? `<li style="list-style:none; margin-bottom:8px;"><span class="badge badge-timeout">ЗАБЛОКИРОВАНО: ${blocked.length}</span><div class="muted-note" style="font-size:11px; margin-top:4px;">${blocked.map(p => escapeHtml(p.text)).join('<br>')}</div></li>` : ''}
-        ${revealedItems.length ? revealedItems.map(b => `<li class="bonus"><span class="prop-tag">Бонус</span>${escapeHtml(b.text)}</li>`).join('') : '<li class="muted-note" style="list-style:none;">Пока ничего не открыто.</li>'}
+        ${revealedBonus.length ? revealedBonus.map(p => `<li class="bonus"><span class="prop-tag">Бонус</span>${escapeHtml(p.text)}</li>`).join('') : '<li class="muted-note" style="list-style:none;">Пока ничего не открыто.</li>'}
         <li class="muted-note" style="list-style:none; margin-top:6px;">Активных свойств: ${activeCount}</li>
     `;
 }
@@ -2619,16 +2594,29 @@ async function actionAnnounceVerdict() {
         null, false);
 }
 
+// Единая точка раскрытия случайного bonus-свойства бункера — через room_bunker_properties,
+// ту же таблицу, что использует effect-registry.js для карт спецусловий. Раньше кнопка
+// ведущего и «Находка» работали через отдельную систему (rooms.active_bonus_ids/revealed_bonus_ids),
+// никак не связанную с тем, что видят и меняют спецусловия — теперь везде один источник истины.
+async function hostRevealRandomBonusProperty() {
+    const props = state.roomBunkerProperties && state.roomBunkerProperties.length
+        ? state.roomBunkerProperties
+        : await refreshRoomBunkerProperties();
+    const hidden = (props || []).filter(p => p.type === 'bonus' && !p.revealed);
+    if (!hidden.length) return null;
+    const pick = hidden[Math.floor(Math.random() * hidden.length)];
+    const { error } = await supabaseClient.from('room_bunker_properties')
+        .update({ revealed: true, available: true }).eq('id', pick.id);
+    if (error) { console.error('[hostRevealRandomBonusProperty]', error); return null; }
+    await refreshRoomBunkerProperties();
+    return pick.text;
+}
+
 async function actionRevealBonus() {
-    const room = state.room;
-    const active = room.active_bonus_ids || [];
-    const revealed = room.revealed_bonus_ids || [];
-    const remaining = active.filter(id => !revealed.includes(id));
-
-    if (remaining.length === 0) return alert('Все дополнительные свойства этой партии уже открыты.');
-
-    const pick = remaining[Math.floor(Math.random() * remaining.length)];
-    await dbUpdateRoom(state.currentRoomCode, { revealed_bonus_ids: [...revealed, pick] });
+    const text = await hostRevealRandomBonusProperty();
+    if (!text) return alert('Все дополнительные свойства этой партии уже открыты.');
+    refreshBunkerList();
+    if (typeof loadHostMasterPanel === 'function') loadHostMasterPanel();
 }
 
 async function actionResetToLobby() {
