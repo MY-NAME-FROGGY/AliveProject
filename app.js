@@ -1858,6 +1858,7 @@ async function updateGameDynamic() {
     const scenPanel = document.getElementById('scenarioPanelGame');
     if (scenPanel) scenPanel.style.display = room.scenario_visible ? 'block' : 'none';
 
+    await refreshRoomBunkerProperties();
     refreshBunkerList();
     refreshBunkerResources();
     refreshEventsFeed();
