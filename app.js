@@ -454,6 +454,15 @@ async function refreshRoomBunkerProperties() {
     state.roomBunkerProperties = await dbFetchRoomBunkerProperties(state.currentRoomCode);
     return state.roomBunkerProperties;
 }
+async function refreshBunkerPanelIndependent() {
+    if (!state.currentRoomCode) return;
+    try {
+        await refreshRoomBunkerProperties();
+        refreshBunkerList();
+    } catch (e) {
+        console.error('Ошибка обновления панели Бункер:', e);
+    }
+}
 
 async function dbCleanupRoundBunkerEffects(roomCode, round) {
     if (!roomCode || !round) return;
