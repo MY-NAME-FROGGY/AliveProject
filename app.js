@@ -1967,6 +1967,8 @@ async function actionToggleScenarioVisible() {
 }
 
 function canRevealCategory(card, room, category) {
+    // Спец.условие — карта-действие: НЕ занимает слот раскрытия и не считается в лимите раунда.
+    if (category === 'special_condition') return { ok: true };
     if (category === 'goal') return { ok: false, reason: 'Цель нельзя открывать другим игрокам.' };
     
     const roundIdx = (room.current_round || 1) - 1;
