@@ -26,6 +26,92 @@ try {
 // СОСТОЯНИЕ
 // ==========================================
 // [ИСПРАВЛЕНО] Добавлены fact1, fact2 и goal. Убрана абстрактная 'fact'.
+// Короткие описания всех effect_key для справочника ведущего (панель «Мастер-редактор»).
+// Полная версия с подробностями — в файле effect_key_reference.md.
+const EFFECT_KEY_DESCRIPTIONS = {
+    vote_immunity: 'Свой голос не может быть использован в этом раунде.',
+    vote_nullified: 'Голос цели не засчитывается при подсчёте.',
+    vote_weight: 'Голос цели/своя считается за увеличенный вес (обычно ×2).',
+    protect_target: 'Голоса ПРОТИВ цели/себя не засчитываются в этом раунде.',
+    skip_vote: 'Пропустить голосование без объяснений (фиксация факта).',
+    cancel_nomination: 'Убрать себя из выставленных на голосование.',
+    open_voting: 'После голосования публикуется, кто за кого голосовал.',
+    second_vote_abstain: 'Воздержавшийся автоматически поддерживает лидера (отложенный эффект).',
+    coin_flip_survival: 'Монета при попытке изгнать вас — орёл спасает (отложенный эффект).',
+    tie_breaker: 'При ничьей лично решаете исход (отложенный эффект).',
+    spy_vote: 'После голосования приватно узнаёте, за кого голосовала цель.',
+    reveal_past_vote: 'Немедленно показывает голос цели в прошлом раунде.',
+    view_tally: 'Показывает текущий подсчёт голосов до оглашения.',
+    nullify_and_double_vote: 'Голос цели аннулируется + свой голос ×2.',
+    exclude_from_vote: 'Цель исключается из голосования в этом раунде.',
+    heir: 'Если цель выбудет по голосованию — получите её открытые карты (отложенный эффект).',
+    direct_eliminate: 'Немедленно исключает цель из игры, минуя голосование.',
+    revive_player: 'Возвращает выбывшего в игру без права голоса в этом раунде.',
+    steal_trait: 'Открытая кража открытой характеристики цели.',
+    steal_trait_blind: 'Слепая кража — выбор категории без просмотра содержимого.',
+    steal_fixed_category_blind: 'Слепая кража с жёстко заданной категорией (без выбора).',
+    swap_trait: 'Открытый обмен характеристикой той же категории.',
+    swap_trait_blind: 'Слепой обмен категорией.',
+    swap_fixed_category: 'Обмен характеристикой жёстко заданной категории.',
+    swap_between_others: 'Обмен характеристикой между ДВУМЯ другими игроками.',
+    swap_fact_between_others: 'Обмен фактом (1 или 2, выбор в момент применения) между двумя другими.',
+    copy_trait: 'Скопировать открытую характеристику цели себе.',
+    inherit_trait: 'Немедленно получить характеристику цели той же категории.',
+    transfer_card: 'Безвозвратно отдать свою карту категории другому игроку.',
+    protect_card: 'Защитить свою характеристику от кражи/обмена до конца игры.',
+    restore_lost_trait: 'Вернуть себе последнюю утраченную характеристику.',
+    force_reveal: 'Принудительно раскрыть карту цели(ей) указанной категории.',
+    reveal_own_trait_early: 'Досрочно раскрыть свою скрытую характеристику по выбору.',
+    reveal_random_hidden: 'Раскрыть случайную свою скрытую характеристику.',
+    peek_trait: 'Приватно посмотреть скрытую характеристику цели.',
+    peek_goal: 'Приватно посмотреть Цель другого игрока.',
+    show_trait_again: 'Публично напомнить об открытой характеристике цели.',
+    reveal_or_peek_fact: 'Узнать факт цели — открыто или только себе (выбор в момент применения).',
+    redraw_category: 'Заменить карту категории у цели на новую случайную.',
+    redraw_health_and_phobia: 'Заменить здоровье и фобию цели на новые случайные.',
+    reset_cards: 'Обнулить и перетянуть заново все свои карты (кроме Био).',
+    cure_health: 'Вылечить карту здоровья цели.',
+    cure_phobia: 'Снять фобию у цели.',
+    infect_disease: 'Заразить цель — новая случайная карта здоровья.',
+    false_trail: 'Ложный след — событие есть, но БЕЗ указания, кто применил.',
+    false_fact: 'Распространить ложный слух о цели (текст вручную).',
+    positive_fact: 'Опубликовать положительный факт о цели (текст вручную).',
+    steal_luggage_choice: 'Кража багажа с выбором большой/малый.',
+    swap_reveal_order: 'Поменяться очередью раскрытия с целью (если оба ещё не ходили).',
+    pass_turn_to_next: 'Цель открывает следующей сразу после текущего активного.',
+    move_to_last_next_round: 'В СЛЕДУЮЩЕМ раунде открываете последним.',
+    swap_seats: 'Реально поменяться местами за столом.',
+    swap_with_host: 'Раскрыть bonus-свойство + решающий голос при ничьей + продвинуть фазу.',
+    swap_fates: '4 режима на выбор: воскрешение/голоса/статус выставления/полный обмен картами.',
+    block_bunker_property: 'Блокирует выбранное свойство бункера (через RPC).',
+    increase_bunker_capacity: 'Увеличивает вместимость бункера (через RPC).',
+    decrease_bunker_capacity: 'Уменьшает вместимость бункера (через RPC).',
+    reveal_random_bonus_property: 'Досрочно раскрывает случайное ещё не раскрытое bonus-свойство.',
+    destroy_random_bonus_property: 'Переводит случайное доступное bonus-свойство в статус «заблокировано».',
+    add_random_room: 'Добавляет случайное bonus-свойство из общего каталога.',
+    delay_bonus_reveal: 'Флаг задержки раскрытия bonus-свойства (на усмотрение ведущего).',
+    catastrophe_immunity: 'Флаг иммунитета к одной катастрофе бункера.',
+    adjust_bunker_resource: 'Изменяет числовой ресурс бункера (если учёт включён).',
+    worsen_random_resource: 'Уменьшает случайный включённый ресурс бункера.',
+    chat_block_all: 'Блокирует общий чат цели на этот раунд.',
+    chat_block_neighbors: 'То же самое, что chat_block_all.',
+    chat_block_self_private: 'Блокирует личный чат самому себе на этот раунд.',
+    mute_and_double_vote: 'Мут (is_muted=true) + голос за двоих. Снимать мут вручную.',
+    timeout_immune: 'Постоянный флаг иммунитета к одному муту/таймауту от ведущего.',
+    skip_defense_penalty: 'Пропустить оправдательную речь без штрафа (флаг).',
+    defense_time_adjust: 'Меняет длительность следующей оправдательной речи.',
+    extend_phase: 'Продлевает текущую фазу на N секунд.',
+    forced_reveal_category_next_round: 'В след. раунде категория раскрытия выбирается случайно.',
+    skip_nomination: 'Флаг: нельзя никого выставить на голосование в этом раунде.',
+    block_special_condition: 'Запрещает цели использовать её спецусловия в этом раунде.',
+    pardon_flag: 'Постоянный флаг прощения одного будущего нарушения.',
+    health_bonus: 'Разовый бонус к здоровью цели на раунд.',
+    block_luggage: 'Блокирует багаж — scope:all даёт всем сразу, иначе только цели/себе.',
+    swap_notes: 'Обменяться личными текстовыми заметками с целью.',
+    clone_special_condition: 'Копирует и повторно исполняет реально применённый эффект другого игрока в этом раунде.',
+    narrative_effect: 'Нарративная карта — тратится и логируется, но состояние игры не меняет.'
+};
+
 const CATEGORY_LABELS = {
     bio: 'БИО', profession: 'Профессия', hobby: 'Хобби', 
     fact1: 'Факт 1', fact2: 'Факт 2', 
@@ -1591,16 +1677,23 @@ async function loadHostMasterPanel() {
 // Справочник всех реально зарегистрированных effect_key — берётся напрямую из движка
 // (AliveEffectEngine.list()), чтобы список не расходился с кодом effect-registry.js.
 // datalist даёт автоподстановку в поле effect_key выше — так сложнее опечататься.
+function updateEffectKeyHint(cardId) {
+    const input = document.getElementById('hostCardEffectKey_' + cardId);
+    const hint = document.getElementById('hostCardEffectKeyHint_' + cardId);
+    if (!input || !hint) return;
+    hint.textContent = EFFECT_KEY_DESCRIPTIONS[input.value] || (input.value ? 'Неизвестный ключ — не зарегистрирован в effect-registry.js' : '');
+}
+
 function renderEffectKeyReference() {
     const keys = (typeof window !== 'undefined' && window.AliveEffectEngine?.list) ? window.AliveEffectEngine.list().sort() : [];
     return `
         <datalist id="registeredEffectKeys">
-            ${keys.map(k => `<option value="${escapeHtml(k)}">`).join('')}
+            ${keys.map(k => `<option value="${escapeHtml(k)}" label="${escapeHtml(EFFECT_KEY_DESCRIPTIONS[k] || '')}">`).join('')}
         </datalist>
         <details style="margin-top:12px;">
             <summary class="muted-note" style="cursor:pointer;">Справочник: все зарегистрированные effect_key (${keys.length})</summary>
-            <div class="muted-note" style="font-size:12px; line-height:1.7; margin-top:6px; max-height:200px; overflow-y:auto;">
-                ${keys.map(k => `<code style="background:var(--void); padding:1px 5px; border-radius:3px; margin:2px; display:inline-block;">${escapeHtml(k)}</code>`).join(' ')}
+            <div style="font-size:12px; line-height:1.6; margin-top:6px; max-height:260px; overflow-y:auto;">
+                ${keys.map(k => `<div style="margin-bottom:5px;"><code style="background:var(--void); padding:1px 5px; border-radius:3px; color:var(--hazard);">${escapeHtml(k)}</code> <span class="muted-note">— ${escapeHtml(EFFECT_KEY_DESCRIPTIONS[k] || 'нет описания')}</span></div>`).join('')}
             </div>
         </details>`;
 }
@@ -1699,7 +1792,8 @@ async function loadHostCardEditor(playerId) {
         const mechanicFields = isSpecial ? `
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:6px;">
                 <label class="muted-note">effect_key
-                    <input id="hostCardEffectKey_${c.id}" value="${escapeHtml(c.effect_key || '')}" placeholder="начните вводить..." list="registeredEffectKeys">
+                    <input id="hostCardEffectKey_${c.id}" value="${escapeHtml(c.effect_key || '')}" placeholder="начните вводить..." list="registeredEffectKeys" oninput="updateEffectKeyHint('${c.id}')">
+                    <div id="hostCardEffectKeyHint_${c.id}" class="muted-note" style="font-size:11px; margin-top:-4px;">${escapeHtml(EFFECT_KEY_DESCRIPTIONS[c.effect_key] || '')}</div>
                 </label>
                 <label class="muted-note">target_type
                     <select id="hostCardTargetType_${c.id}">
