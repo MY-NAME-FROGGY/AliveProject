@@ -1192,8 +1192,10 @@ function syncGamePhaseTimerTicker() {
     if (!el) return;
     if (room.phase_running && room.phase_ends_at) {
         startGamePhaseTick();
+    } else if (room.phase_paused_remaining) {
+        el.innerHTML = `<span style="color:var(--hazard);">⏸ На паузе — осталось ${room.phase_paused_remaining} сек.</span>`;
     } else {
-        el.textContent = room.phase_paused_remaining ? 'На паузе: ' + room.phase_paused_remaining + ' сек.' : '';
+        el.innerHTML = `<span class="muted-note" style="font-size:16px; text-transform:none; letter-spacing:normal;">⏹ Таймер остановлен</span>`;
     }
 }
 
@@ -1862,11 +1864,11 @@ function renderHostPhaseControls(room, hasTimer) {
     let timerButtons = '';
     if (hasTimer) {
         if (room.phase_running) {
-            timerButtons = `<button class="btn btn-ghost btn-sm" onclick="hostPauseTimer()">Пауза</button> <button class="btn btn-ghost btn-sm" onclick="hostStopTimer()">Стоп</button>`;
+            timerButtons = `<button class="btn btn-ghost btn-sm" onclick="hostPauseTimer()">⏸ Пауза</button> <button class="btn btn-ghost btn-sm" onclick="hostStopTimer()">⏹ Сброс</button>`;
         } else if (room.phase_paused_remaining) {
-            timerButtons = `<button class="btn btn-primary btn-sm" onclick="hostResumeTimer()">Возобновить</button> <button class="btn btn-ghost btn-sm" onclick="hostStopTimer()">Стоп</button>`;
+            timerButtons = `<button class="btn btn-primary btn-sm" onclick="hostResumeTimer()">▶ Продолжить</button> <button class="btn btn-ghost btn-sm" onclick="hostStopTimer()">⏹ Сброс</button>`;
         } else {
-            timerButtons = `<button class="btn btn-primary btn-sm" onclick="hostStartTimer()">Старт таймера</button>`;
+            timerButtons = `<button class="btn btn-primary btn-sm" onclick="hostStartTimer()">▶ Старт таймера</button>`;
         }
     }
 
@@ -1918,7 +1920,7 @@ async function updateGameDynamic() {
             ).join('');
 
             let finalRevealHtml = '';
-            if (room.current_phase === 'awaiting_verdict' && isMe && !isEliminated) {
+            if (room.current_phase === 'awaiting_verdict' && isMe) {
                 const hidden = (state.myCardCache || []).filter(c => !c.revealed);
                 if (hidden.length > 0) {
                     finalRevealHtml = room.final_reveal_unlocked
@@ -2073,7 +2075,10 @@ async function actionToggleScenarioVisible() {
 function canRevealCategory(card, room, category) {
     // Спец.условие — карта-действие: НЕ занимает слот раскрытия и не считается в лимите раунда.
     if (category === 'special_condition') return { ok: true };
-    if (category === 'goal') return { ok: false, reason: 'Цель нельзя открывать другим игрокам.' };
+    if (category === 'goal') {
+        if (room.current_phase === 'awaiting_verdict' && room.final_reveal_unlocked) return { ok: true };
+        return { ok: false, reason: 'Цель можно открыть только в финале, когда ведущий разрешит.' };
+    }
     
     const roundIdx = (room.current_round || 1) - 1;
     const slots = (room.settings?.round_reveals || [])[roundIdx] || ['any'];
@@ -2302,7 +2307,6 @@ async function actionSaveNote(btn) {
 async function actionRevealTrait(cardId) {
     const room = state.room;
     const me = state.players.find(p => p.id === state.playerId);
-    if (me && me.is_alive === false) return alert('Вы выбыли из игры и не можете открывать характеристики.');
 
     if (room.current_phase === 'awaiting_verdict') {
         if (!room.final_reveal_unlocked) return alert('Ведущий ещё не разрешил открывать последнюю характеристику.');
@@ -2310,6 +2314,8 @@ async function actionRevealTrait(cardId) {
         const target = card.find(c => String(c.id) === String(cardId));
         if (!target) return alert('Характеристика не найдена, попробуйте обновить страницу.');
         if (target.revealed) return;
+        const check = canRevealCategory(card, room, target.category);
+        if (!check.ok) return alert(check.reason);
 
         const { error } = await supabaseClient.from('player_cards').update({ revealed: true, round_revealed: room.current_round }).eq('id', cardId);
         if (error) { console.error('Ошибка открытия характеристики:', error); return alert('Не удалось открыть характеристику: ' + error.message); }
@@ -2318,6 +2324,7 @@ async function actionRevealTrait(cardId) {
         return;
     }
 
+    if (me && me.is_alive === false) return alert('Вы выбыли из игры и не можете открывать характеристики.');
     if (room.current_phase !== 'reveal') return alert('Открытие характеристик доступно только в фазе «Открытие раунда».');
 
     const revealOrder = getRevealOrder(room, state.players);
