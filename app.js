@@ -312,7 +312,10 @@ function renderSeatPicker(room) {
 
 async function dbSetCustomization(roomCode, playerId, patch) {
     const { error } = await supabaseClient.from('players').update(patch).eq('id', playerId).eq('room_code', roomCode);
-    if (error) console.error('Ошибка сохранения кастомизации:', error);
+    if (error) {
+        console.error('Ошибка сохранения кастомизации:', error);
+        alert('Не удалось сохранить: ' + error.message);
+    }
 }
 
 async function actionSetAvatar(a) { await dbSetCustomization(state.currentRoomCode, state.playerId, { avatar: a }); }
@@ -1453,6 +1456,44 @@ function renderGameTable() {
     updateGameDynamic();
 }
 
+// Блок вердикта вынесен отдельно, чтобы перерисовывать его на каждый тик поллинга —
+// раньше кнопки Победа/Поражение не подсвечивались после нажатия (экран рисуется только
+// один раз при входе в фазу), а игроки вообще не видели, к чему склоняется ведущий.
+function renderVerdictControls(room, isHost) {
+    if (room.current_phase !== 'awaiting_verdict') return '';
+
+    if (isHost) {
+        return `
+            <div class="verdict-controls">
+                <div class="settings-field wide" style="margin-top:10px;">
+                    <label><input type="checkbox" id="finalRevealToggle" onchange="actionToggleFinalReveal()" ${room.final_reveal_unlocked ? 'checked' : ''} style="width:auto;display:inline-block;margin-right:6px;vertical-align:middle;">Разрешить игрокам открыть последнюю характеристику</label>
+                </div>
+                <div style="margin-top:10px; display:flex; gap:8px; justify-content:center; flex-wrap:wrap;">
+                    <button class="btn ${room.verdict === 'victory' ? 'btn-primary' : 'btn-ghost'}" onclick="actionSetVerdictChoice('victory')">${room.verdict === 'victory' ? '✓ ' : ''}Победа</button>
+                    <button class="btn ${room.verdict === 'defeat' ? 'btn-danger' : 'btn-ghost'}" onclick="actionSetVerdictChoice('defeat')">${room.verdict === 'defeat' ? '✓ ' : ''}Поражение</button>
+                </div>
+                <div style="margin-top:12px;">
+                    <label class="muted-note" style="display:block; margin-bottom:6px;">Шанс выжить</label>
+                    <div style="display:flex; align-items:center; gap:10px; justify-content:center;">
+                        <input type="range" id="verdictPercentRange" min="0" max="100" value="${room.verdict_percent ?? 50}" oninput="document.getElementById('verdictPercent').value=this.value" onchange="actionSetVerdictPercent(this.value)" style="flex:1; max-width:220px;">
+                        <input type="number" id="verdictPercent" placeholder="%" min="0" max="100" value="${room.verdict_percent ?? ''}" oninput="document.getElementById('verdictPercentRange').value=this.value" onchange="actionSetVerdictPercent(this.value)" style="width:80px; margin:0;"> %
+                    </div>
+                </div>
+                <p class="muted-note" style="margin-top:6px;">Ваш черновой выбор виден игрокам живьём (но ни на что не влияет, пока вы не нажмёте «Огласить вердикт»).</p>
+                <button class="btn btn-danger" style="margin-top:12px; width:100%;" onclick="actionAnnounceVerdict()">ОГЛАСИТЬ ВЕРДИКТ</button>
+            </div>
+        `;
+    }
+
+    const choiceLabel = room.verdict === 'victory' ? '🏆 Победа' : (room.verdict === 'defeat' ? '💀 Поражение' : 'ещё не решено');
+    return `
+        <div class="verdict-controls">
+            <p class="muted-note">Черновой выбор ведущего прямо сейчас (окончательно не оглашён):</p>
+            <p style="margin-top:6px; font-size:16px;"><strong>${choiceLabel}</strong>${room.verdict_percent != null ? ` · шанс выжить: <strong>${room.verdict_percent}%</strong>` : ''}</p>
+        </div>
+    `;
+}
+
 function renderFinalPhaseTable() {
     const room = state.room;
     const isHost = room.host_id === state.playerId;
@@ -1466,7 +1507,7 @@ function renderFinalPhaseTable() {
             (isHost
                 ? '<p class="muted-note">Выслушайте вслух аргументы игроков об их шансах и вынесите вердикт.</p>'
                 : (room.final_reveal_unlocked
-                    ? '<p class="muted-note">Можно открыть последнюю характеристику — кнопка на своей карточке за столом ниже.</p>'
+                    ? '<p class="muted-note">Можно открыть последнюю характеристику — кнопка на своей карточке за столом ниже или в своей карточке.</p>'
                     : '<p class="muted-note">Обсудите с ведущим вслух свои шансы на выживание.</p>'));
     } else {
         const survivors = state.players.filter(p => p.id !== room.host_id && p.is_alive !== false);
@@ -1491,47 +1532,27 @@ function renderFinalPhaseTable() {
             </div>`;
     }
 
-    let hostControls = '';
-    if (isHost && room.current_phase === 'awaiting_verdict') {
-        hostControls = `
-            <div class="verdict-controls">
-                <div class="settings-field wide" style="margin-top:10px;">
-                    <label><input type="checkbox" id="finalRevealToggle" onchange="actionToggleFinalReveal()" ${room.final_reveal_unlocked ? 'checked' : ''} style="width:auto;display:inline-block;margin-right:6px;vertical-align:middle;">Разрешить игрокам открыть последнюю характеристику</label>
-                </div>
-                <div style="margin-top:10px; display:flex; gap:8px; justify-content:center; flex-wrap:wrap;">
-                    <button class="btn ${room.verdict === 'victory' ? 'btn-primary' : 'btn-ghost'}" onclick="actionSetVerdictChoice('victory')">Победа</button>
-                    <button class="btn ${room.verdict === 'defeat' ? 'btn-danger' : 'btn-ghost'}" onclick="actionSetVerdictChoice('defeat')">Поражение</button>
-                </div>
-                <div style="margin-top:12px;">
-                    <label class="muted-note" style="display:block; margin-bottom:6px;">Шанс выжить</label>
-                    <div style="display:flex; align-items:center; gap:10px; justify-content:center;">
-                        <input type="range" id="verdictPercentRange" min="0" max="100" value="${room.verdict_percent ?? 50}" oninput="document.getElementById('verdictPercent').value=this.value" style="flex:1; max-width:220px;">
-                        <input type="number" id="verdictPercent" placeholder="%" min="0" max="100" value="${room.verdict_percent ?? ''}" oninput="document.getElementById('verdictPercentRange').value=this.value" style="width:80px; margin:0;"> %
-                    </div>
-                </div>
-                <p class="muted-note" style="margin-top:6px;">Кнопки и процент видны только вам, игроки их не видят.</p>
-                <button class="btn btn-danger" style="margin-top:12px; width:100%;" onclick="actionAnnounceVerdict()">ОГЛАСИТЬ ВЕРДИКТ</button>
-            </div>
-        `;
-    }
-
     document.getElementById('app').innerHTML = `
         <h1>ОСТАТЬСЯ <span>В ЖИВЫХ</span></h1>
         <div class="hazard-strip"></div>
         <div class="panel" style="border-left:6px solid ${meta.color}; text-align:center;">
             <div style="font-size:14px; letter-spacing:0.08em; text-transform:uppercase; color:${meta.color};">${meta.icon} ${escapeHtml(meta.label)}</div>
             ${phaseBody}
-            ${hostControls}
+            <div id="verdictControls">${renderVerdictControls(room, isHost)}</div>
         </div>
         <div class="panel">
             <h2>Стол</h2>
             <div id="hostStrip"></div>
             <div class="ptable-grid" id="gamePlayersList"></div>
         </div>
+        ${!isHost ? `<div class="panel" id="myCardPanel">
+            <h2>Моя карточка</h2>
+            <p class="muted-note">Загрузка...</p>
+        </div>` : ''}
         ${isHost ? `<button class="btn btn-ghost" style="margin-top:16px;" onclick="actionResetToLobby()">Сбросить в лобби (для теста)</button>` : ''}
     `;
 
-    loadMyCard();
+    if (!isHost) loadMyCard();
     updateGameDynamic();
 }
 
@@ -1882,6 +1903,9 @@ async function updateGameDynamic() {
     if (!room) return;
     const isHost = room.host_id === state.playerId;
 
+    const verdictEl = document.getElementById('verdictControls');
+    if (verdictEl) verdictEl.innerHTML = renderVerdictControls(room, isHost);
+
     const nominees = room.nominees || [];
     const defenseIdx = room.defense_index || 0;
     const revealIdx = room.reveal_index || 0;
@@ -2075,9 +2099,16 @@ async function actionToggleScenarioVisible() {
 function canRevealCategory(card, room, category) {
     // Спец.условие — карта-действие: НЕ занимает слот раскрытия и не считается в лимите раунда.
     if (category === 'special_condition') return { ok: true };
+
+    // Финал: лимит раскрытий раунда сюда не применяется вообще — это отдельный, разовый
+    // механизм «открыть последнюю характеристику», единственное условие — разрешение ведущего.
+    if (room.current_phase === 'awaiting_verdict') {
+        if (!room.final_reveal_unlocked) return { ok: false, reason: 'Ведущий пока не разрешил открывать последнюю характеристику.' };
+        return { ok: true };
+    }
+
     if (category === 'goal') {
-        if (room.current_phase === 'awaiting_verdict' && room.final_reveal_unlocked) return { ok: true };
-        return { ok: false, reason: 'Цель можно открыть только в финале, когда ведущий разрешит.' };
+        return { ok: false, reason: 'Цель нельзя открывать другим игрокам.' };
     }
     
     const roundIdx = (room.current_round || 1) - 1;
@@ -2177,7 +2208,12 @@ async function loadMyCard() {
                 }
             }
         } else if (!c.revealed) {
-            if (amEliminated) {
+            if (room.current_phase === 'awaiting_verdict') {
+                const check = canRevealCategory(card, room, c.category);
+                extra = check.ok
+                    ? `<button class="btn btn-sm btn-primary" style="margin-top:5px;" onclick="actionRevealTrait('${c.id}')">Открыть остальным</button>`
+                    : `<div class="muted-note" style="font-size:11px; margin-top:3px;">${escapeHtml(check.reason)}</div>`;
+            } else if (amEliminated) {
                 extra = '<div class="muted-note" style="font-size:11px; margin-top:3px;">(вы выбыли — открытие недоступно)</div>';
             } else if (room.current_phase !== 'reveal') {
                 extra = '<div class="muted-note" style="font-size:11px; margin-top:3px;">(не открыто остальным — доступно только в фазе «Открытие раунда»)</div>';
@@ -2709,6 +2745,11 @@ async function actionToggleFinalReveal() {
 
 async function actionSetVerdictChoice(choice) {
     await dbUpdateRoom(state.currentRoomCode, { verdict: choice });
+}
+
+async function actionSetVerdictPercent(value) {
+    const percent = Math.max(0, Math.min(100, parseInt(value) || 0));
+    await dbUpdateRoom(state.currentRoomCode, { verdict_percent: percent });
 }
 
 async function actionAnnounceVerdict() {
