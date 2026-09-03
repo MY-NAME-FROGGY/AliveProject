@@ -80,6 +80,13 @@ textarea { resize: vertical; min-height: 80px; }
 /* Игровой стол */
 .game-layout{display:grid; grid-template-columns:260px 1fr; gap:16px; align-items:start;}
 .game-sidebar{display:flex; flex-direction:column;}
+
+/* Лобби — на широких экранах в две колонки, чтобы не листать один длинный список панелей */
+.lobby-grid{display:grid; grid-template-columns:1fr; gap:0; align-items:start;}
+.lobby-col{display:flex; flex-direction:column; min-width:0;}
+@media (min-width: 900px){
+  .lobby-grid{grid-template-columns:1fr 1fr; gap:16px;}
+}
 .game-main{display:flex; flex-direction:column; min-width:0;}
 .game-aside{display:flex; flex-direction:column; min-width:0;}
 
@@ -164,7 +171,7 @@ textarea { resize: vertical; min-height: 80px; }
    Стол/бейджи/лента событий пересобираются целиком каждый тик — анимации
    на них перезапускались с нуля каждый раз и били в глаза, поэтому убраны.
    ============================================================ */
-.ptable-card{ transition: transform .18s ease; }
+.ptable-card{ transition: transform .18s ease, box-shadow .18s ease, opacity .3s ease; }
 .ptable-card:hover{ transform: translateY(-2px); }
 
 @keyframes ae-phase-banner{
@@ -185,6 +192,44 @@ textarea { resize: vertical; min-height: 80px; }
 @media (prefers-reduced-motion: reduce){
   .panel[style*="border-left:6px solid"], .card-row.revealed, .card-row.my-revealed{ animation:none !important; }
 }
+
+/* ============================================================
+   ОБЩИЙ ВИЗУАЛЬНЫЙ ПРОХОД — плавное появление экранов, усиленный
+   баннер фазы, состояние загрузки. Панели пересоздаются только при
+   полной смене экрана/фазы (не на каждый тик поллинга), поэтому
+   анимация на них безопасна и не мигает.
+   ============================================================ */
+@keyframes ae-panel-in{
+  from{ opacity:0; transform:translateY(10px); }
+  to{ opacity:1; transform:translateY(0); }
+}
+.panel{ animation: ae-panel-in .3s ease-out; }
+
+/* Баннер текущей фазы — фоновая подсветка цветом фазы поверх обычной рамки панели,
+   плюс более заметный заголовок. Работает через ту же inline-style-подпись, что уже
+   используется для запуска анимации входа баннера. */
+.panel[style*="border-left:6px solid"]{
+  background: linear-gradient(180deg, rgba(255,255,255,0.03) 0%, var(--void-2) 60%);
+  position: relative;
+}
+.panel[style*="border-left:6px solid"]::before{
+  content:''; position:absolute; inset:0; border-radius:6px; pointer-events:none;
+  box-shadow: inset 0 0 40px -20px currentColor; opacity:.5;
+}
+
+@keyframes ae-loading-pulse{
+  0%,100%{ opacity:.5; }
+  50%{ opacity:1; }
+}
+.muted-note{ }
+p.muted-note:only-child, .muted-note:has(> :only-child) {}
+/* Точечно помечаем именно текст "Загрузка..." через атрибут, задаём его в JS через class="loading-pulse" */
+.loading-pulse{ animation: ae-loading-pulse 1.4s ease-in-out infinite; display:inline-block; }
+
+@media (prefers-reduced-motion: reduce){
+  .panel, .loading-pulse{ animation:none !important; }
+}
+
 /* Отключаем любые анимации/переходы у часто перерисовываемых статусов и хроники событий */
 .badge, .badge-ready, .badge-notready, .badge-muted, .badge-timeout,
 .host-badge, .player-list li, .events-feed, .events-feed li,
