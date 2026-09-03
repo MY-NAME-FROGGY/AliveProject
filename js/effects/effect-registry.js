@@ -576,12 +576,28 @@
     const cards = (await playerCards(ctx, target)).filter(c =>
       c.category !== 'special_condition' && c.category !== 'goal' && c.revealed !== true);
     if (!cards.length) throw new Error('У цели нет скрытых характеристик.');
-    const chosen = window.AliveEffectsUI?.pickTrait
-      ? await window.AliveEffectsUI.pickTrait(cards, 'ПРОСМОТР — какую скрытую характеристику посмотреть?')
-      : cards[0];
-    if (!chosen) return false;
-    if (typeof window !== 'undefined' && window.alert) window.alert(`${chosen.category}: ${chosen.text}`);
-    return { targetPlayerId: target, category: chosen.category };
+
+    // Только названия категорий — содержимое не показываем, пока категория не выбрана.
+    const categories = [...new Set(cards.map(c => c.category))];
+    const chosenCategory = window.AliveEffectsUI?.pickCategory
+      ? await window.AliveEffectsUI.pickCategory(categories, 'ПРОСМОТР — выберите категорию (содержимое покажем только этой одной)')
+      : categories[0];
+    if (!chosenCategory) return false;
+
+    const card = cards.find(c => c.category === chosenCategory);
+    const targetName = ctx.players.find(p => p.id === target)?.name || 'игрок';
+
+    // Переносим узнанное в личные заметки исполнителя — не просто разовый alert.
+    const { data: existingNote } = await db(ctx).from('notes').select('text')
+      .eq('room_code', roomCode(ctx)).eq('player_id', ctx.player.id).maybeSingle();
+    const addition = `[Разведка] ${targetName} — ${card.category}: ${card.text}`;
+    const newText = existingNote?.text ? `${existingNote.text}\n${addition}` : addition;
+    await db(ctx).from('notes').upsert(
+      { room_code: roomCode(ctx), player_id: ctx.player.id, text: newText, updated_at: new Date().toISOString() },
+      { onConflict: 'room_code,player_id' });
+
+    if (typeof window !== 'undefined' && window.alert) window.alert(`${card.category}: ${card.text}\n\n(записано в ваши личные заметки)`);
+    return { targetPlayerId: target, category: card.category };
   }, { targetType: 'one', eventType: 'neutral', eventText: () => 'Использован приватный просмотр скрытой характеристики.' });
 
   // 1711 «Оживить изгнанного» — вернуть в игру без права голоса в этом раунде.
@@ -888,10 +904,12 @@
     const target = targetId(ctx);
     const targetCards = (await playerCards(ctx, target)).filter(c => c.category === 'luggage_big' || c.category === 'luggage_small');
     if (!targetCards.length) throw new Error('У цели нет карт багажа.');
-    const chosen = window.AliveEffectsUI?.pickTrait
-      ? await window.AliveEffectsUI.pickTrait(targetCards, 'Какой багаж украсть?')
-      : targetCards[0];
-    if (!chosen) return false;
+    const categories = [...new Set(targetCards.map(c => c.category))];
+    const chosenCategory = window.AliveEffectsUI?.pickCategory
+      ? await window.AliveEffectsUI.pickCategory(categories, 'Какой багаж украсть? (содержимое узнаете после выбора)')
+      : categories[0];
+    if (!chosenCategory) return false;
+    const chosen = targetCards.find(c => c.category === chosenCategory);
     if (await isProtected(ctx, target, chosen.category)) {
       throw new Error(`Категория «${chosen.category}» защищена «Бронью» и не может быть украдена.`);
     }
@@ -1005,7 +1023,17 @@
     const target = targetId(ctx);
     const card = await findCard(ctx, target, 'goal');
     if (!card) throw new Error('У цели нет карты цели.');
-    if (typeof window !== 'undefined' && window.alert) window.alert(`Цель игрока: ${card.text}`);
+    const targetName = ctx.players.find(p => p.id === target)?.name || 'игрок';
+
+    const { data: existingNote } = await db(ctx).from('notes').select('text')
+      .eq('room_code', roomCode(ctx)).eq('player_id', ctx.player.id).maybeSingle();
+    const addition = `[Разведка] Цель игрока ${targetName}: ${card.text}`;
+    const newText = existingNote?.text ? `${existingNote.text}\n${addition}` : addition;
+    await db(ctx).from('notes').upsert(
+      { room_code: roomCode(ctx), player_id: ctx.player.id, text: newText, updated_at: new Date().toISOString() },
+      { onConflict: 'room_code,player_id' });
+
+    if (typeof window !== 'undefined' && window.alert) window.alert(`Цель игрока: ${card.text}\n\n(записано в ваши личные заметки)`);
     return { targetPlayerId: target };
   }, { targetType: 'one', eventType: 'neutral', eventText: () => 'Использована карта разведки цели другого игрока.' });
 
