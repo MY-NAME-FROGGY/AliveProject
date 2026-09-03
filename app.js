@@ -853,42 +853,52 @@ function renderLobby() {
         <h1>ОСТАТЬСЯ <span>В ЖИВЫХ</span></h1>
         <div class="hazard-strip"></div>
         <div id="phaseBanner"></div>
-        <div class="panel" style="text-align:center;">
-            <h3>Код комнаты для друзей:</h3>
-            <div class="code-box">${room.code}</div>
-        </div>
-        <div class="panel">
-            <div class="section-title"><h2>Сценарий</h2>
-                ${isHost ? `<button class="btn btn-ghost btn-sm" onclick="openCatalog()">${room.scenario_id ? 'Сменить' : 'Выбрать'}</button>` : ''}
+        <div class="lobby-grid">
+            <div class="lobby-col">
+                <div class="panel" style="text-align:center;">
+                    <h3>Код комнаты для друзей:</h3>
+                    <div class="code-box">${room.code}</div>
+                </div>
+                <div class="panel">
+                    <div class="section-title"><h2>Сценарий</h2>
+                        ${isHost ? `<button class="btn btn-ghost btn-sm" onclick="openCatalog()">${room.scenario_id ? 'Сменить' : 'Выбрать'}</button>` : ''}
+                    </div>
+                    <p id="scenarioSummary">${room.scenario_id ? 'Загрузка...' : 'Сценарий ещё не выбран.'}</p>
+                    <div id="scenarioDetailBtn">${(room.scenario_id && isHost) ? `<button class="btn btn-ghost btn-sm" onclick="openScenarioDetail('${room.scenario_id}')">Подробнее</button>` : ''}</div>
+                </div>
+                <div class="panel" id="settingsPanel">
+                    <h2>Настройки игры</h2>
+                    <div id="settingsContent">${isHost ? renderSettingsEditable(settings) : renderSettingsReadonly(settings)}</div>
+                </div>
             </div>
-            <p id="scenarioSummary">${room.scenario_id ? 'Загрузка...' : 'Сценарий ещё не выбран.'}</p>
-            <div id="scenarioDetailBtn">${(room.scenario_id && isHost) ? `<button class="btn btn-ghost btn-sm" onclick="openScenarioDetail('${room.scenario_id}')">Подробнее</button>` : ''}</div>
-        </div>
-        <div class="panel" id="settingsPanel">
-            <h2>Настройки игры</h2>
-            <div id="settingsContent">${isHost ? renderSettingsEditable(settings) : renderSettingsReadonly(settings)}</div>
-        </div>
-        <div class="panel">
-            <h2>Кастомизация</h2>
-            <p class="muted-note">Аватар и цвета будут видны и в лобби, и за столом в игре.</p>
-            <div id="customizationPicker">${renderCustomizationPicker()}</div>
-        </div>
-        <div class="panel">
-            <h2>Выбор места</h2>
-            <p class="muted-note">Номер места будет виден рядом с вашим именем в лобби и в игре.</p>
-            <div id="seatPicker">${renderSeatPicker(room)}</div>
-        </div>
-        <div class="panel">
-            <div class="section-title"><h2>Участники</h2><span id="playerCount" class="muted-note"></span></div>
-            <ul class="player-list" id="playersList"></ul>
-        </div>
-        <div class="panel">
-            <h2>Чат</h2>
-            <div class="chat-box">
-                <div class="chat-messages" id="chatMessages"></div>
-                <div class="chat-input-row">
-                    <input id="chatInput" placeholder="Сообщение..." onkeydown="handleChatKey(event)">
-                    <button class="btn btn-primary btn-sm" onclick="actionSendChat()">➤</button>
+            <div class="lobby-col">
+                <div class="panel">
+                    <details ${isHost ? 'open' : ''}>
+                        <summary style="cursor:pointer;"><h2 style="display:inline;">Кастомизация</h2></summary>
+                        <p class="muted-note">Аватар и цвета будут видны и в лобби, и за столом в игре.</p>
+                        <div id="customizationPicker">${renderCustomizationPicker()}</div>
+                    </details>
+                </div>
+                <div class="panel">
+                    <details>
+                        <summary style="cursor:pointer;"><h2 style="display:inline;">Выбор места</h2></summary>
+                        <p class="muted-note">Номер места будет виден рядом с вашим именем в лобби и в игре.</p>
+                        <div id="seatPicker">${renderSeatPicker(room)}</div>
+                    </details>
+                </div>
+                <div class="panel">
+                    <div class="section-title"><h2>Участники</h2><span id="playerCount" class="muted-note"></span></div>
+                    <ul class="player-list" id="playersList"></ul>
+                </div>
+                <div class="panel">
+                    <h2>Чат</h2>
+                    <div class="chat-box">
+                        <div class="chat-messages" id="chatMessages"></div>
+                        <div class="chat-input-row">
+                            <input id="chatInput" placeholder="Сообщение..." onkeydown="handleChatKey(event)">
+                            <button class="btn btn-primary btn-sm" onclick="actionSendChat()">➤</button>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1421,7 +1431,7 @@ function renderGameTable() {
                     <div class="section-title"><h2>Бункер</h2>
                         ${isHost ? `<button class="btn btn-ghost btn-sm" onclick="actionRevealBonus()">Открыть доп. свойство</button>` : ''}
                     </div>
-                    <div id="bunkerRevealedList"></div>
+                    <div id="bunkerRevealedList" style="max-height:260px; overflow-y:auto;"></div>
                     <div id="bunkerResourcesList" style="margin-top:10px;"></div>
                 </div>
                 <div class="panel">
@@ -1665,33 +1675,56 @@ async function loadHostMasterPanel() {
         <h3 style="margin-top:16px;">🛠 Мастер-редактор</h3>
         <p class="muted-note">Живое вмешательство в игру — меняйте что угодно прямо по ходу партии.</p>
 
-        <h4 style="margin-top:10px;">Ресурсы бункера</h4>
-        ${resourceRows}
-        <div style="display:flex; gap:6px; margin-top:6px; flex-wrap:wrap;">
-            <input id="hostNewResKey" placeholder="ключ (food_extra)" style="flex:1; min-width:100px;">
-            <input id="hostNewResLabel" placeholder="название" style="flex:1; min-width:100px;">
-            <select id="hostNewResUnit"><option value="months">Месяцы</option><option value="days">Дни</option><option value="yesno">Да/Нет</option></select>
-            <input type="number" id="hostNewResAmount" placeholder="0" style="width:70px;">
-            <button class="btn btn-sm btn-primary" onclick="actionHostAddResource()">+ Добавить</button>
-        </div>
+        <details open style="margin-top:10px;">
+            <summary style="cursor:pointer; font-weight:bold; color:var(--hazard); padding:6px 0;">Ресурсы бункера</summary>
+            ${resourceRows}
+            <div style="display:flex; gap:6px; margin-top:6px; flex-wrap:wrap;">
+                <input id="hostNewResKey" placeholder="ключ (food_extra)" style="flex:1; min-width:100px;">
+                <input id="hostNewResLabel" placeholder="название" style="flex:1; min-width:100px;">
+                <select id="hostNewResUnit"><option value="months">Месяцы</option><option value="days">Дни</option><option value="yesno">Да/Нет</option></select>
+                <input type="number" id="hostNewResAmount" placeholder="0" style="width:70px;">
+                <button class="btn btn-sm btn-primary" onclick="actionHostAddResource()">+ Добавить</button>
+            </div>
+        </details>
 
-        <h4 style="margin-top:14px;">Свойства бункера</h4>
-        ${propertyRows}
-        <div style="display:flex; gap:6px; margin-top:6px; flex-wrap:wrap;">
-            ${catalogOptions ? `<select id="hostCatalogPropSelect" style="flex:1; min-width:160px;">${catalogOptions}</select><button class="btn btn-sm btn-primary" onclick="actionHostAddPropertyFromCatalog()">+ Из каталога</button>` : '<span class="muted-note">Каталог пуст или сценарий не выбран.</span>'}
-        </div>
-        <div style="display:flex; gap:6px; margin-top:6px; flex-wrap:wrap;">
-            <input id="hostCustomPropText" placeholder="своё свойство (текст)" style="flex:1; min-width:160px;">
-            <select id="hostCustomPropType"><option value="bonus">Бонус</option><option value="base">База</option></select>
-            <button class="btn btn-sm btn-primary" onclick="actionHostAddCustomProperty()">+ Добавить своё</button>
-        </div>
+        <details style="margin-top:10px;">
+            <summary style="cursor:pointer; font-weight:bold; color:var(--hazard); padding:6px 0;">Свойства бункера</summary>
+            ${propertyRows}
+            <div style="display:flex; gap:6px; margin-top:6px; flex-wrap:wrap;">
+                ${catalogOptions ? `<select id="hostCatalogPropSelect" style="flex:1; min-width:160px;">${catalogOptions}</select><button class="btn btn-sm btn-primary" onclick="actionHostAddPropertyFromCatalog()">+ Из каталога</button>` : '<span class="muted-note">Каталог пуст или сценарий не выбран.</span>'}
+            </div>
+            <div style="display:flex; gap:6px; margin-top:6px; flex-wrap:wrap;">
+                <input id="hostCustomPropText" placeholder="своё свойство (текст)" style="flex:1; min-width:160px;">
+                <select id="hostCustomPropType"><option value="bonus">Бонус</option><option value="base">База</option></select>
+                <button class="btn btn-sm btn-primary" onclick="actionHostAddCustomProperty()">+ Добавить своё</button>
+            </div>
+        </details>
 
-        <h4 style="margin-top:14px;">Карточки игроков</h4>
-        <select id="hostCardEditorPlayer" onchange="loadHostCardEditor(this.value)">
-            <option value="">— выберите игрока —</option>
-            ${state.players.filter(p => p.id !== room.host_id).map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('')}
-        </select>
-        <div id="hostCardEditorList" style="margin-top:8px;"></div>
+        <details style="margin-top:10px;">
+            <summary style="cursor:pointer; font-weight:bold; color:var(--hazard); padding:6px 0;">Карточки игроков</summary>
+            <select id="hostCardEditorPlayer" onchange="loadHostCardEditor(this.value)">
+                <option value="">— выберите игрока —</option>
+                ${state.players.filter(p => p.id !== room.host_id).map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('')}
+            </select>
+            <div id="hostCardEditorList" style="margin-top:8px;"></div>
+        </details>
+
+        <details style="margin-top:10px;">
+            <summary style="cursor:pointer; font-weight:bold; color:var(--hazard); padding:6px 0;">⚙️ Настройки игры</summary>
+            <p class="muted-note">То же самое, что задавалось в лобби, но теперь можно поменять по ходу партии. Длительность фаз применяется к следующему запуску таймера — уже идущий отсчёт не меняет.</p>
+            <div class="settings-grid">
+                <div class="settings-field"><label>Нужно выживших</label><input type="number" min="1" id="liveTargetSurvivors" value="${room.settings?.target_survivors ?? 3}"></div>
+                <div class="settings-field"><label>Всего раундов</label><input type="number" min="${room.current_round || 1}" id="liveRounds" value="${room.settings?.rounds ?? 6}"></div>
+                <div class="settings-field"><label>Открытие, сек</label><input type="number" min="1" id="liveReveal" value="${room.settings?.phase_seconds?.reveal ?? 60}"></div>
+                <div class="settings-field"><label>Обсуждение, сек</label><input type="number" min="1" id="liveDiscussion" value="${room.settings?.phase_seconds?.discussion ?? 180}"></div>
+                <div class="settings-field"><label>Оправдание, сек</label><input type="number" min="1" id="liveDefense" value="${room.settings?.phase_seconds?.defense ?? 30}"></div>
+                <div class="settings-field"><label>Голосование, сек</label><input type="number" min="1" id="liveVoting" value="${room.settings?.phase_seconds?.voting ?? 60}"></div>
+                <div class="settings-field wide">
+                    <label><input type="checkbox" id="livePrivateChat" style="width:auto;display:inline-block;margin-right:6px;vertical-align:middle;" ${room.settings?.private_chat_enabled ? 'checked' : ''}>Разрешить личные чаты между игроками</label>
+                </div>
+            </div>
+            <button class="btn btn-sm btn-primary" onclick="actionHostSaveLiveSettings()">Сохранить настройки игры</button>
+        </details>
 
         ${renderEffectKeyReference()}
     `;
@@ -1850,6 +1883,33 @@ async function loadHostCardEditor(playerId) {
             <button class="btn btn-sm btn-primary" style="margin-top:6px;" onclick="actionHostSaveCard('${c.id}', ${isSpecial})">Сохранить</button>
         </div>`;
     }).join('') || '<p class="muted-note">У игрока нет карт.</p>';
+}
+
+async function actionHostSaveLiveSettings() {
+    const room = state.room;
+    const targetSurvivors = parseInt(document.getElementById('liveTargetSurvivors').value) || 1;
+    const rounds = parseInt(document.getElementById('liveRounds').value) || (room.current_round || 1);
+    const reveal = parseInt(document.getElementById('liveReveal').value) || 60;
+    const discussion = parseInt(document.getElementById('liveDiscussion').value) || 180;
+    const defense = parseInt(document.getElementById('liveDefense').value) || 30;
+    const voting = parseInt(document.getElementById('liveVoting').value) || 60;
+    const privateChat = document.getElementById('livePrivateChat').checked;
+
+    if (rounds < (room.current_round || 1)) {
+        return alert('Нельзя выставить меньше раундов, чем уже сыграно (' + (room.current_round || 1) + ').');
+    }
+
+    const settings = {
+        ...(room.settings || {}),
+        target_survivors: targetSurvivors,
+        rounds,
+        phase_seconds: { reveal, discussion, defense, voting },
+        private_chat_enabled: privateChat
+    };
+
+    await dbUpdateRoom(state.currentRoomCode, { settings });
+    alert('Настройки игры обновлены.');
+    loadHostMasterPanel();
 }
 
 async function actionHostSaveCard(cardId, isSpecial) {
@@ -2015,6 +2075,19 @@ async function refreshGameChat() {
     el.scrollTop = el.scrollHeight;
 }
 
+// Проверяет активные флаги блокировки чата от карт спецусловий за этот раунд.
+// isPrivate=true — проверяем личный чат (chat_block_self_private), иначе общий (chat_block_all/neighbors).
+async function checkChatBlocked(isPrivate) {
+    const room = state.room;
+    if (!room) return null;
+    const keys = isPrivate ? ['chat_block_self_private'] : ['chat_block_all', 'chat_block_neighbors'];
+    const { data } = await supabaseClient.from('round_effects').select('id')
+        .eq('room_code', state.currentRoomCode).eq('round', room.current_round || 1)
+        .eq('is_active', true).eq('target_player_id', state.playerId).in('effect_key', keys);
+    if (data && data.length) return 'Использование ' + (isPrivate ? 'личного чата' : 'чата') + ' заблокировано в этом раунде (эффект спецусловия).';
+    return null;
+}
+
 async function actionSendGameChat() {
     const input = document.getElementById('gameChatInput');
     if (!input) return;
@@ -2024,6 +2097,9 @@ async function actionSendGameChat() {
     const me = state.players.find(p => p.id === state.playerId);
     if (me && me.is_muted) return alert('Вы в муте, писать нельзя.');
     if (me && me.timeout_until && new Date(me.timeout_until) > new Date()) return alert('Вы в таймауте.');
+
+    const chatBlocked = await checkChatBlocked(!!state.gameChatRecipient);
+    if (chatBlocked) return alert(chatBlocked);
 
     input.value = '';
     if (state.gameChatRecipient) {
@@ -2246,7 +2322,7 @@ async function loadMyCard() {
         <p class="muted-note">Видны только вам, ведущий их не видит.</p>
         <textarea id="myNotes" rows="3" style="width:100%; padding:10px; background:var(--void); border:1px solid #4a4e28; color:var(--paper); border-radius:4px; font-family:inherit;">${escapeHtml(note?.text || '')}</textarea>
         <button class="btn btn-ghost btn-sm" style="margin-top:6px;" onclick="actionSaveNote(this)">Сохранить заметку</button>
-        ${historyHtml ? `<h3 style="margin-top:14px;">История ваших действий</h3><ul class="prop-list">${historyHtml}</ul>` : ''}
+        ${historyHtml ? `<details style="margin-top:14px;"><summary style="cursor:pointer; font-weight:bold; color:var(--hazard);">История ваших действий</summary><ul class="prop-list" style="margin-top:8px;">${historyHtml}</ul></details>` : ''}
     `;
 }
 
@@ -2681,6 +2757,11 @@ async function actionNominate(targetId) {
     if (targetId === state.playerId) return alert('Нельзя выставить самого себя.');
     if (targetId === room.host_id) return alert('Нельзя выставить ведущего.');
 
+    const { data: blocks } = await supabaseClient.from('round_effects').select('id')
+        .eq('room_code', state.currentRoomCode).eq('round', room.current_round || 1)
+        .eq('is_active', true).eq('effect_key', 'skip_nomination').eq('target_player_id', state.playerId);
+    if (blocks && blocks.length) return alert('В этом раунде вы не можете никого выставить на голосование (эффект спецусловия).');
+
     const nominations = { ...(room.nominations || {}) };
     if (nominations[state.playerId]) return alert('Вы уже выставили игрока в этом раунде — изменить нельзя.');
 
@@ -2986,6 +3067,15 @@ async function actionToggleMute(targetId, currentlyMuted) {
 async function actionTimeout(targetId, targetName) {
     const mins = prompt('Таймаут для ' + targetName + ' — на сколько минут?', '2');
     if (!mins) return;
+
+    const { data: immune } = await supabaseClient.from('round_effects').select('id')
+        .eq('room_code', state.currentRoomCode).eq('round', 0)
+        .eq('is_active', true).eq('effect_key', 'timeout_immune').eq('target_player_id', targetId);
+    if (immune && immune.length) {
+        await supabaseClient.from('round_effects').update({ is_active: false }).eq('id', immune[0].id);
+        return alert(targetName + ' использовал(а) карту иммунитета — таймаут в этот раз не применён (иммунитет израсходован).');
+    }
+
     const seconds = Math.max(10, (parseInt(mins) || 2) * 60);
     await dbTimeoutPlayer(state.currentRoomCode, targetId, state.playerId, seconds);
 }
