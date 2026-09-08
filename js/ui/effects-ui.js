@@ -4,14 +4,35 @@
   const UI = {
     overlay: null,
     init() {
+      if (this.overlay) return;
       this.overlay = document.getElementById('aliveEffectModal');
       if (!this.overlay) return;
       this.overlay.addEventListener('click', e => { if (e.target === this.overlay) this.close(false); });
+      this.overlay.addEventListener('keydown', e => {
+        if (e.key === 'Escape') { e.preventDefault(); this.close(false); }
+        if (e.key === 'Tab') {
+          const nodes = [...this.overlay.querySelectorAll('button:not(:disabled),input,select,textarea,[tabindex="0"]')];
+          const first = nodes[0], last = nodes[nodes.length-1];
+          if(e.shiftKey && document.activeElement===first){e.preventDefault();last?.focus();}
+          else if(!e.shiftKey && document.activeElement===last){e.preventDefault();first?.focus();}
+        }
+      });
+      new MutationObserver(() => {
+        const open=this.overlay.classList.contains('alive-effect-open');
+        this.overlay.setAttribute('aria-hidden',String(!open));
+        this.overlay.inert=!open;
+        const box=this.overlay.querySelector('.alive-effect-box');
+        if(box){box.setAttribute('role','dialog');box.setAttribute('aria-modal','true');box.setAttribute('aria-label',box.querySelector('h2')?.textContent||'Спецусловие');}
+        if(open && !this.overlay.contains(document.activeElement)) {this.previousFocus=document.activeElement;this.overlay.querySelector('button')?.focus();}
+      }).observe(this.overlay,{attributes:true,attributeFilter:['class']});
     },
     escape(v) { return String(v ?? '').replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[s])); },
     close(value = false) {
       if (!this.overlay) return;
       this.overlay.classList.remove('alive-effect-open');
+      this.overlay.setAttribute('aria-hidden','true');
+      this.overlay.inert=true;
+      this.previousFocus?.focus();
       const resolve = this.overlay._resolve;
       this.overlay._resolve = null;
       if (resolve) resolve(value);
