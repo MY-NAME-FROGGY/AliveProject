@@ -6,7 +6,8 @@
 <title>ОСТАТЬСЯ В ЖИВЫХ</title>
 <link rel="stylesheet" href="style.css">
 <link rel="stylesheet" href="card-effects.css">
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<link rel="stylesheet" href="compact.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.116.0"></script>
 </head>
 <body>
 <div class="wrap" id="app">
@@ -19,6 +20,7 @@
 <script src="js/effects/effect-registry.js"></script>
 <script src="js/ui/effects-ui.js"></script>
 <script src="js/effects/effect-compat.js"></script>
-<script>document.addEventListener('DOMContentLoaded', function () { if (window.AliveEffectsUI) window.AliveEffectsUI.init(); });</script>
+<script src="js/gameplay.js"></script>
+<script>document.addEventListener('DOMContentLoaded', function () { if (window.AliveEffectsUI) window.AliveEffectsUI.init(); window.AliveGame.boot(); });</script>
 </body>
 </html>
