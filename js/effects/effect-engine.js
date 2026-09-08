@@ -20,6 +20,7 @@
         one_other: 'one',
         one_any: 'one',
         two_other: 'two',
+        two_any: 'two',
         host: 'one',
         none: 'self'
       };
