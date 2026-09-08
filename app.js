@@ -144,7 +144,7 @@ const PHASE_META = {
 function phaseDuration(phaseKey) {
     const key = PHASE_META[phaseKey]?.durationKey;
     if (!key) return 0;
-    return (state.room?.settings?.phase_seconds?.[key]) || 60;
+    return state.room?.settings?.phase_seconds?.[key] ?? 60;
 }
 
 const state = {
@@ -218,11 +218,11 @@ async function dbCreateRoom(hostName) {
 }
 
 async function dbJoinRoom(code, name) {
-    const { data: room, error: roomErr } = await supabaseClient.from('rooms').select('').eq('code', code).maybeSingle();
+    const { data: room, error: roomErr } = await supabaseClient.from('rooms').select('*').eq('code', code).maybeSingle();
     if (roomErr || !room) throw new Error('Комната не найдена. Проверьте код.');
     if (room.phase !== 'lobby') throw new Error('Игра уже началась, присоединиться нельзя.');
 
-    const { data: players, error: playersErr } = await supabaseClient.from('players').select('').eq('room_code', code);
+    const { data: players, error: playersErr } = await supabaseClient.from('players').select('*').eq('room_code', code);
     if (playersErr) throw playersErr;
 
     const already = players.find(p => p.id === state.playerId);
@@ -341,7 +341,7 @@ function renderCustomizationPicker() {
 }
 
 function avatarChip(p) {
-    return `<div class="ptable-avatar" style="border-color:${p.outline_color || '#4a4e28'};">${p.avatar || ''}</div>`;
+    return `<div class="ptable-avatar" style="border-color:${p.outline_color || '#4a4e28'};">${escapeHtml(p.avatar || '')}</div>`;
 }
 
 function nameColorStyle(p) {
@@ -473,10 +473,10 @@ async function dbFetchCharacterPool() {
     const pageSize = 1000;
     while (true) {
         const { data, error } = await supabaseClient.from('character_pool')
-            .select('id,category,text,value,target_type,effect_key,effect_params,target_kind')
+            .select('id,category,text,value,action_type,target_type,effect_key,effect_params,target_kind').order('id')
             .eq('is_active', true)
             .range(from, from + pageSize - 1);
-        if (error) { console.error('Ошибка загрузки character_pool:', error); break; }
+        if (error) throw error;
         if (!data || data.length === 0) break;
         all = all.concat(data);
         if (data.length < pageSize) break;
@@ -498,7 +498,7 @@ async function dbInsertPlayerCard(roomCode, playerId, card) {
         target_type: c.target_type || null, action_type: c.action_type || null, effect_key: c.effect_key || null, effect_params: c.effect_params || {}, target_kind: c.target_kind || 'player'
     }));
     const { error } = await supabaseClient.from('player_cards').insert(rows);
-    if (error) console.error('Ошибка записи карточки для игрока ' + playerId + ':', error);
+    if (error) throw error;
 }
 
 async function dbFetchMyCard(roomCode, playerId) {
@@ -719,7 +719,7 @@ function stopPolling() {
 async function refreshMyCardIfChanged() {
     if (!state.currentRoomCode || !state.playerId) return;
     const fresh = await dbFetchMyCard(state.currentRoomCode, state.playerId);
-    const sig = c => (c || []).map(x => `${x.id}:${x.text}:${x.value}:${x.revealed}:${x.used}`).sort().join('|');
+    const sig = c => JSON.stringify((c || []).slice().sort((a,b) => a.id-b.id));
     if (sig(fresh) !== sig(state.myCardCache || [])) {
         await loadMyCard();
     }
@@ -750,37 +750,10 @@ async function pollTick() {
 
     const isHost = room.host_id === state.playerId;
 
-    if (isHost && room.phase === 'starting') {
-        const notReady = players.find(p => !p.is_ready);
-        if (notReady) {
-            await dbUpdateRoom(state.currentRoomCode, { phase: 'lobby', countdown_ends_at: null });
-            alert('Старт отменён: ' + notReady.name + ' не готов(а).');
-            room.phase = 'lobby';
-        } else if (room.countdown_ends_at && new Date(room.countdown_ends_at) <= new Date() && !state.cardsGenerationInFlight) {
-            state.cardsGenerationInFlight = true;
-            try {
-                if (room.card_mode === 'preset') {
-                    await assignPresetCardsForRoom(state.currentRoomCode, players, room.host_id, room.scenario_id);
-                } else {
-                    await generateCardsForRoom(state.currentRoomCode, players, room.host_id);
-                }
-                const activeBonusIds = await selectActiveBonusIds(room.scenario_id, players.length);
-                await dbSyncRoomBunkerProperties(state.currentRoomCode, room.scenario_id);
-                await refreshRoomBunkerProperties();
-                const revealSeconds = phaseDuration('reveal');
-                const revealEnds = revealSeconds > 0 ? new Date(Date.now() + revealSeconds * 1000).toISOString() : null;
-                
-                await dbUpdateRoom(state.currentRoomCode, {
-                    phase: 'game', current_round: 1, current_phase: 'reveal',
-                    phase_ends_at: revealEnds, phase_running: revealSeconds > 0, phase_paused_remaining: null,
-                    nominees: [], nominations: {}, defense_index: 0, reveal_index: 0,
-                    active_bonus_ids: activeBonusIds, revealed_bonus_ids: []
-                });
-                room.phase = 'game';
-            } finally {
-                state.cardsGenerationInFlight = false;
-            }
-        }
+    if (isHost && room.phase === 'starting' && room.countdown_ends_at && new Date(room.countdown_ends_at) <= new Date()) {
+        await AliveGame.rpc('alive_start', { p_code: state.currentRoomCode, p_finish: true });
+        Object.assign(room, await dbFetchRoom(state.currentRoomCode));
+        state.room = room;
     }
 
     state.view = room.phase === 'game' ? 'game' : 'lobby';
@@ -811,7 +784,7 @@ function showWarning(msg) {
 }
 
 function escapeHtml(str) {
-    return String(str).replace(/[&<>"']/g, s => ({ '&': '&', '<': '<', '>': '>', '"': '"', "'": "'" }[s]));
+    return String(str).replace(/[&<>"']/g, s => ({ '&': '&', '<': '<', '>': '>', '"': '"', "'": '&#39;' }[s]));
 }
 
 // ==========================================
@@ -873,7 +846,7 @@ function renderLobby() {
             </div>
             <div class="lobby-col">
                 <div class="panel">
-                    <details ${isHost ? 'open' : ''}>
+                    <details>
                         <summary style="cursor:pointer;"><h2 style="display:inline;">Кастомизация</h2></summary>
                         <p class="muted-note">Аватар и цвета будут видны и в лобби, и за столом в игре.</p>
                         <div id="customizationPicker">${renderCustomizationPicker()}</div>
@@ -902,7 +875,7 @@ function renderLobby() {
                 </div>
             </div>
         </div>
-        <div style="display:flex; gap:10px; margin-top:20px; flex-wrap:wrap;">
+        <div class="lobby-actions">
             <button class="btn btn-primary" id="readyToggleBtn" onclick="actionToggleReady()"></button>
             ${isHost ? `<button class="btn btn-danger" onclick="actionStartGame()">Начать игру</button>` : ''}
             <button class="btn btn-ghost" onclick="actionLeaveRoom()">← Выйти в меню</button>
@@ -992,10 +965,10 @@ function renderSettingsEditable(s) {
             <div class="settings-field"><label>Макс. игроков</label><input type="number" min="1" id="setMax" value="${s.max_players ?? 12}"></div>
             <div class="settings-field"><label>Нужно выживших</label><input type="number" min="1" id="setSurvivors" value="${s.target_survivors ?? 3}"></div>
             <div class="settings-field"><label>Кол-во раундов</label><input type="number" min="1" id="setRounds" value="${s.rounds ?? 6}" onchange="regenerateRoundBlocks()"></div>
-            <div class="settings-field"><label>Открытие, сек</label><input type="number" min="1" id="setReveal" value="${s.phase_seconds?.reveal ?? 60}"></div>
-            <div class="settings-field"><label>Обсуждение, сек</label><input type="number" min="1" id="setDiscussion" value="${s.phase_seconds?.discussion ?? 180}"></div>
-            <div class="settings-field"><label>Оправдание, сек</label><input type="number" min="1" id="setDefense" value="${s.phase_seconds?.defense ?? 30}"></div>
-            <div class="settings-field"><label>Голосование, сек</label><input type="number" min="1" id="setVoting" value="${s.phase_seconds?.voting ?? 60}"></div>
+            <div class="settings-field"><label>Открытие, сек</label><input type="number" min="0" max="86400" id="setReveal" value="${s.phase_seconds?.reveal ?? 60}"></div>
+            <div class="settings-field"><label>Обсуждение, сек</label><input type="number" min="0" max="86400" id="setDiscussion" value="${s.phase_seconds?.discussion ?? 180}"></div>
+            <div class="settings-field"><label>Оправдание, сек</label><input type="number" min="0" max="86400" id="setDefense" value="${s.phase_seconds?.defense ?? 30}"></div>
+            <div class="settings-field"><label>Голосование, сек</label><input type="number" min="0" max="86400" id="setVoting" value="${s.phase_seconds?.voting ?? 60}"></div>
             <div class="settings-field wide">
                 <label><input type="checkbox" id="setPrivateChat" style="width:auto;display:inline-block;margin-right:6px;vertical-align:middle;" ${s.private_chat_enabled ? 'checked' : ''}>Разрешить личные чаты между игроками</label>
             </div>
@@ -1138,8 +1111,8 @@ function renderPlayerRow(p, room, isHost) {
             ${isHost && !isMe ? `
                 <span class="player-actions">
                     <button class="btn btn-ghost btn-sm" onclick="actionToggleMute('${p.id}', ${p.is_muted})">${p.is_muted ? 'Размутить' : 'Мут'}</button>
-                    <button class="btn btn-ghost btn-sm" onclick="actionTimeout('${p.id}', '${escapeHtml(p.name)}')">Таймаут</button>
-                    <button class="btn btn-danger btn-sm" onclick="actionKick('${p.id}', '${escapeHtml(p.name)}')">Кик</button>
+                    <button class="btn btn-ghost btn-sm" onclick="actionTimeout('${p.id}')">Таймаут</button>
+                    <button class="btn btn-danger btn-sm" onclick="actionKick('${p.id}')">Кик</button>
                 </span>
             ` : ''}
         </li>
@@ -1205,7 +1178,7 @@ function syncGamePhaseTimerTicker() {
     if (!el) return;
     if (room.phase_running && room.phase_ends_at) {
         startGamePhaseTick();
-    } else if (room.phase_paused_remaining) {
+    } else if (room.phase_paused_remaining != null) {
         el.innerHTML = `<span style="color:var(--hazard);">⏸ На паузе — осталось ${room.phase_paused_remaining} сек.</span>`;
     } else {
         el.innerHTML = `<span class="muted-note" style="font-size:16px; text-transform:none; letter-spacing:normal;">⏹ Таймер остановлен</span>`;
@@ -1361,7 +1334,7 @@ function renderGameTable() {
 
     const isHost = room.host_id === state.playerId;
     const meta = PHASE_META[room.current_phase] || { label: room.current_phase, icon: '❔', color: '#555', durationKey: null };
-    const hasTimer = !!meta.durationKey;
+    const hasTimer = room.current_phase !== 'finished';
 
     const nominees = room.nominees || [];
     const defenseIdx = room.defense_index || 0;
@@ -1412,7 +1385,7 @@ function renderGameTable() {
     document.getElementById('app').innerHTML = `
         <h1>ОСТАТЬСЯ <span>В ЖИВЫХ</span></h1>
         <div class="hazard-strip"></div>
-        <div class="panel" style="border-left:6px solid ${meta.color}; text-align:center;">
+        <div class="panel phase-toolbar" style="border-left:4px solid ${meta.color}; text-align:center;">
             <div style="font-size:14px; letter-spacing:0.08em; text-transform:uppercase; color:${meta.color};">${meta.icon} ${escapeHtml(meta.label)} · Раунд ${room.current_round || 1}</div>
             ${hasTimer ? `<div style="font-size:28px; font-weight:bold; margin-top:6px;" id="gamePhaseCountdown"></div>` : ''}
             ${phaseBody}
@@ -1454,7 +1427,7 @@ function renderGameTable() {
             </div>
         </div>
         ${renderGameChatPanel(room)}
-        ${isHost ? `<button class="btn btn-ghost" style="margin-top:16px;" onclick="actionResetToLobby()">Сбросить в лобби (для теста)</button>` : ''}
+        ${isHost ? `<button class="btn btn-ghost" style="margin-top:16px;" onclick="actionResetToLobby()">Вернуться в лобби</button>` : ''}
     `;
 
     if (!isHost) loadMyCard();
@@ -1559,7 +1532,7 @@ function renderFinalPhaseTable() {
             <h2>Моя карточка</h2>
             <p class="muted-note">Загрузка...</p>
         </div>` : ''}
-        ${isHost ? `<button class="btn btn-ghost" style="margin-top:16px;" onclick="actionResetToLobby()">Сбросить в лобби (для теста)</button>` : ''}
+        ${isHost ? `<button class="btn btn-ghost" style="margin-top:16px;" onclick="actionResetToLobby()">Вернуться в лобби</button>` : ''}
     `;
 
     if (!isHost) loadMyCard();
@@ -1713,12 +1686,12 @@ async function loadHostMasterPanel() {
             <summary style="cursor:pointer; font-weight:bold; color:var(--hazard); padding:6px 0;">⚙️ Настройки игры</summary>
             <p class="muted-note">То же самое, что задавалось в лобби, но теперь можно поменять по ходу партии. Длительность фаз применяется к следующему запуску таймера — уже идущий отсчёт не меняет.</p>
             <div class="settings-grid">
-                <div class="settings-field"><label>Нужно выживших</label><input type="number" min="1" id="liveTargetSurvivors" value="${room.settings?.target_survivors ?? 3}"></div>
+                <div class="settings-field"><label>Нужно выживших</label><input type="number" min="0" max="86400" id="liveTargetSurvivors" value="${room.settings?.target_survivors ?? 3}"></div>
                 <div class="settings-field"><label>Всего раундов</label><input type="number" min="${room.current_round || 1}" id="liveRounds" value="${room.settings?.rounds ?? 6}"></div>
-                <div class="settings-field"><label>Открытие, сек</label><input type="number" min="1" id="liveReveal" value="${room.settings?.phase_seconds?.reveal ?? 60}"></div>
-                <div class="settings-field"><label>Обсуждение, сек</label><input type="number" min="1" id="liveDiscussion" value="${room.settings?.phase_seconds?.discussion ?? 180}"></div>
-                <div class="settings-field"><label>Оправдание, сек</label><input type="number" min="1" id="liveDefense" value="${room.settings?.phase_seconds?.defense ?? 30}"></div>
-                <div class="settings-field"><label>Голосование, сек</label><input type="number" min="1" id="liveVoting" value="${room.settings?.phase_seconds?.voting ?? 60}"></div>
+                <div class="settings-field"><label>Открытие, сек</label><input type="number" min="0" max="86400" id="liveReveal" value="${room.settings?.phase_seconds?.reveal ?? 60}"></div>
+                <div class="settings-field"><label>Обсуждение, сек</label><input type="number" min="0" max="86400" id="liveDiscussion" value="${room.settings?.phase_seconds?.discussion ?? 180}"></div>
+                <div class="settings-field"><label>Оправдание, сек</label><input type="number" min="0" max="86400" id="liveDefense" value="${room.settings?.phase_seconds?.defense ?? 30}"></div>
+                <div class="settings-field"><label>Голосование, сек</label><input type="number" min="0" max="86400" id="liveVoting" value="${room.settings?.phase_seconds?.voting ?? 60}"></div>
                 <div class="settings-field wide">
                     <label><input type="checkbox" id="livePrivateChat" style="width:auto;display:inline-block;margin-right:6px;vertical-align:middle;" ${room.settings?.private_chat_enabled ? 'checked' : ''}>Разрешить личные чаты между игроками</label>
                 </div>
@@ -1889,10 +1862,10 @@ async function actionHostSaveLiveSettings() {
     const room = state.room;
     const targetSurvivors = parseInt(document.getElementById('liveTargetSurvivors').value) || 1;
     const rounds = parseInt(document.getElementById('liveRounds').value) || (room.current_round || 1);
-    const reveal = parseInt(document.getElementById('liveReveal').value) || 60;
-    const discussion = parseInt(document.getElementById('liveDiscussion').value) || 180;
-    const defense = parseInt(document.getElementById('liveDefense').value) || 30;
-    const voting = parseInt(document.getElementById('liveVoting').value) || 60;
+    const reveal = readGameNumber('liveReveal', 0, 86400);
+    const discussion = readGameNumber('liveDiscussion', 0, 86400);
+    const defense = readGameNumber('liveDefense', 0, 86400);
+    const voting = readGameNumber('liveVoting', 0, 86400);
     const privateChat = document.getElementById('livePrivateChat').checked;
 
     if (rounds < (room.current_round || 1)) {
@@ -1903,7 +1876,7 @@ async function actionHostSaveLiveSettings() {
         ...(room.settings || {}),
         target_survivors: targetSurvivors,
         rounds,
-        phase_seconds: { reveal, discussion, defense, voting },
+        phase_seconds: { ...(room.settings?.phase_seconds || {}), reveal, discussion, defense, voting },
         private_chat_enabled: privateChat
     };
 
@@ -1946,7 +1919,7 @@ function renderHostPhaseControls(room, hasTimer) {
     if (hasTimer) {
         if (room.phase_running) {
             timerButtons = `<button class="btn btn-ghost btn-sm" onclick="hostPauseTimer()">⏸ Пауза</button> <button class="btn btn-ghost btn-sm" onclick="hostStopTimer()">⏹ Сброс</button>`;
-        } else if (room.phase_paused_remaining) {
+        } else if (room.phase_paused_remaining != null) {
             timerButtons = `<button class="btn btn-primary btn-sm" onclick="hostResumeTimer()">▶ Продолжить</button> <button class="btn btn-ghost btn-sm" onclick="hostStopTimer()">⏹ Сброс</button>`;
         } else {
             timerButtons = `<button class="btn btn-primary btn-sm" onclick="hostStartTimer()">▶ Старт таймера</button>`;
@@ -2018,7 +1991,7 @@ async function updateGameDynamic() {
             const modControls = (isHost && !isMe) ? `
                 <div style="display:flex; gap:4px; margin-top:4px;">
                     <button class="btn btn-ghost btn-sm" onclick="actionToggleMute('${p.id}', ${p.is_muted})">${p.is_muted ? 'Размутить' : 'Мут'}</button>
-                    <button class="btn btn-ghost btn-sm" onclick="actionTimeout('${p.id}', '${escapeHtml(p.name)}')">Таймаут</button>
+                    <button class="btn btn-ghost btn-sm" onclick="actionTimeout('${p.id}')">Таймаут</button>
                 </div>` : '';
 
             return `<div class="ptable-card${isSpeaking ? ' speaking' : ''}${isNominated ? ' nominated' : ''}${isEliminated ? ' eliminated' : ''}">
@@ -2242,48 +2215,9 @@ async function loadMyCard() {
             if (amEliminated) {
                 extra = '<div class="muted-note" style="font-size:11px; margin-top:3px;">(вы выбыли — использование недоступно)</div>';
             } else {
-                const targetKind = c.target_kind || 'player';
-                const tt = c.target_type || 'self';
-
-                if (targetKind === 'property') {
-                    const properties = (state.roomBunkerProperties || []).filter(p =>
-                        p.available !== false && !(p.blocked && (p.blocked_until_round == null || p.blocked_until_round >= (room.current_round || 1)))
-                    );
-                    const selectedId = `bunkerPropertyPicker_${c.id}`;
-                    extra = `<div style="margin-top:6px;">
-                        <div class="muted-note" style="font-size:11px; margin-bottom:4px;">Выберите свойство бункера</div>
-                        ${properties.length ? `<select id="${selectedId}" style="width:100%; padding:8px; background:var(--void); border:1px solid #4a4e28; color:var(--paper); border-radius:4px;">${properties.map(p => `<option value="${p.property_id}">${escapeHtml(p.type === 'bonus' ? 'Бонус · ' : 'База · ')}${escapeHtml(p.text)}</option>`).join('')}</select>
-                        <button class="btn btn-sm btn-danger" style="margin-top:5px;" onclick="actionUseSpecialCondition('${c.id}')">Подтвердить использование</button>` : '<span class="muted-note">Нет доступных свойств бункера для выбора.</span>'}
-                    </div>`;
-                } else {
-                    const others = state.players.filter(p => p.id !== state.playerId && p.id !== room.host_id);
-
-                    if (tt === 'self') {
-                        extra = `<div style="margin-top:6px;">
-                                <button class="btn btn-sm btn-primary" onclick="actionUseSpecialCondition('${c.id}')">Использовать</button>
-                            </div>`;
-                    } else if (tt === 'all') {
-                        extra = `<div style="margin-top:6px;">
-                                <button class="btn btn-sm btn-primary" onclick="actionUseSpecialCondition('${c.id}')">Использовать (на всех игроков)</button>
-                            </div>`;
-                    } else {
-                        const inputType = tt === 'two' ? 'checkbox' : 'radio';
-                        const needCount = tt === 'two' ? 2 : 1;
-                        const hint = tt === 'two' ? 'Выберите ровно 2 цели' : 'Выберите 1 цель';
-                        extra = `<div style="margin-top:6px;">
-                                <button class="btn btn-sm btn-primary" onclick="toggleTargetPicker('${c.id}')">Использовать</button>
-                                <div id="targetPicker_${c.id}" data-target-type="${tt}" data-need-count="${needCount}" style="display:none; margin-top:6px;">
-                                    <div class="muted-note" style="font-size:11px;">${hint}</div>
-                                    ${others.length ? others.map(p =>
-                                        `<label class="muted-note" style="display:block;"><input type="${inputType}" name="targetPicker_${c.id}_radio" value="${p.id}" style="width:auto; display:inline-block; margin-right:4px;">${escapeHtml(p.name)}</label>`
-                                    ).join('') : '<span class="muted-note">Нет других игроков для выбора цели.</span>'}
-                                    <button class="btn btn-sm btn-danger" style="margin-top:4px;" onclick="actionUseSpecialCondition(\'${c.id}\')">Подтвердить использование</button>
-                                </div>
-                            </div>`;
-                    }
-                }
+                extra = `<button class="btn btn-sm btn-primary" onclick="actionUseSpecialCondition('${c.id}')">Использовать</button>`;
             }
-        } else if (!c.revealed) {
+        } else if (!c.revealed && !isSpecial) {
             if (room.current_phase === 'awaiting_verdict') {
                 const check = canRevealCategory(card, room, c.category);
                 extra = check.ok
@@ -3018,16 +2952,17 @@ async function actionSaveSettings() {
     }
 
     const settings = {
-        min_players: parseInt(document.getElementById('setMin').value) || 1,
-        max_players: parseInt(document.getElementById('setMax').value) || 20,
+        ...(state.room.settings || {}),
+        min_players: readGameNumber('setMin', 1, 50),
+        max_players: readGameNumber('setMax', 1, 50),
         target_survivors: parseInt(document.getElementById('setSurvivors').value) || 1,
         rounds,
         round_reveals: roundReveals,
         phase_seconds: {
-            reveal: parseInt(document.getElementById('setReveal').value) || 60,
-            discussion: parseInt(document.getElementById('setDiscussion').value) || 180,
-            defense: parseInt(document.getElementById('setDefense').value) || 30,
-            voting: parseInt(document.getElementById('setVoting').value) || 60
+            reveal: readGameNumber('setReveal', 0, 86400),
+            discussion: readGameNumber('setDiscussion', 0, 86400),
+            defense: readGameNumber('setDefense', 0, 86400),
+            voting: readGameNumber('setVoting', 0, 86400)
         },
         private_chat_enabled: document.getElementById('setPrivateChat').checked,
         resources: {
@@ -3055,7 +2990,7 @@ async function syncRoomResources(roomCode, items) {
     if (error) console.error('[syncRoomResources]', error);
 }
 
-async function actionKick(targetId, targetName) {
+async function actionKick(targetId, targetName = state.players.find(p=>p.id===targetId)?.name || 'игрока') {
     if (!confirm('Исключить ' + targetName + '?')) return;
     await dbKickPlayer(state.currentRoomCode, targetId, state.playerId);
 }
@@ -3064,21 +2999,7 @@ async function actionToggleMute(targetId, currentlyMuted) {
     await dbSetMute(state.currentRoomCode, targetId, state.playerId, !currentlyMuted);
 }
 
-async function actionTimeout(targetId, targetName) {
-    const mins = prompt('Таймаут для ' + targetName + ' — на сколько минут?', '2');
-    if (!mins) return;
-
-    const { data: immune } = await supabaseClient.from('round_effects').select('id')
-        .eq('room_code', state.currentRoomCode).eq('round', 0)
-        .eq('is_active', true).eq('effect_key', 'timeout_immune').eq('target_player_id', targetId);
-    if (immune && immune.length) {
-        await supabaseClient.from('round_effects').update({ is_active: false }).eq('id', immune[0].id);
-        return alert(targetName + ' использовал(а) карту иммунитета — таймаут в этот раз не применён (иммунитет израсходован).');
-    }
-
-    const seconds = Math.max(10, (parseInt(mins) || 2) * 60);
-    await dbTimeoutPlayer(state.currentRoomCode, targetId, state.playerId, seconds);
-}
+async function actionTimeout(targetId) { return AliveGame.moderate(targetId, 'timeout'); }
 
 async function actionSendChat() {
     const input = document.getElementById('chatInput');
@@ -3118,7 +3039,7 @@ async function init() {
     renderHome();
 }
 
-init();
+// Initialization runs after the secure adapters have loaded.
 
 // ============================================================
 // STAGE 4.2 — FINAL BUNKER EFFECT CLIENT LAYER
