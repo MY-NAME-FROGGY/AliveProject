@@ -905,7 +905,14 @@ function renderLobby() {
 }
 
 function resourceUnitLabel(unit) {
-    return unit === 'months' ? 'мес.' : unit === 'days' ? 'дн.' : 'да/нет';
+    const labels = { months: 'мес.', days: 'дн.', yesno: 'да/нет', liters: 'л', l: 'л', 'л': 'л', kg: 'кг', pieces: 'шт.' };
+    return Object.prototype.hasOwnProperty.call(labels, unit) ? labels[unit] : String(unit || 'шт.');
+}
+
+function resourceUnitOptions(unit = 'months') {
+    const options = [['months', 'Месяцы'], ['days', 'Дни'], ['л', 'Литры'], ['kg', 'Килограммы'], ['pieces', 'Штуки'], ['yesno', 'Да/Нет']];
+    if (!options.some(([value]) => value === unit)) options.push([unit, resourceUnitLabel(unit)]);
+    return options.map(([value, label]) => `<option value="${escapeHtml(value)}" ${unit === value ? 'selected' : ''}>${escapeHtml(label)}</option>`).join('');
 }
 
 function defaultResourceItems() {
@@ -939,9 +946,7 @@ function onResourceUnitChange(key) {
 }
 
 function renderResourceRow(key, item) {
-    const unitOptions = [
-        ['months', 'Месяцы'], ['days', 'Дни'], ['yesno', 'Да/Нет']
-    ].map(([v, label]) => `<option value="${v}" ${item.unit === v ? 'selected' : ''}>${label}</option>`).join('');
+    const unitOptions = resourceUnitOptions(item.unit || 'months');
 
     return `
         <div class="resource-row" style="display:grid; grid-template-columns:auto 1fr 110px 90px; gap:8px; align-items:center; margin-bottom:6px;">
@@ -1003,7 +1008,7 @@ function renderSettingsReadonly(s) {
 
     const activeResources = Object.values((s.resources && s.resources.items) || {}).filter(r => r.enabled);
     const resourcesSummary = activeResources.length
-        ? activeResources.map(r => `${r.label}: ${r.unit === 'yesno' ? (r.start ? 'да' : 'нет') : r.start + ' ' + resourceUnitLabel(r.unit)}`).join(' · ')
+        ? activeResources.map(r => `${escapeHtml(r.label)}: ${r.unit === 'yesno' ? (r.start ? 'да' : 'нет') : escapeHtml(r.start + ' ' + resourceUnitLabel(r.unit))}`).join(' · ')
         : 'не заданы';
 
     return `<div class="readonly-settings">
@@ -1668,7 +1673,7 @@ async function loadHostMasterPanel() {
             <div style="display:flex; gap:6px; margin-top:6px; flex-wrap:wrap;">
                 <input id="hostNewResKey" placeholder="ключ (food_extra)" style="flex:1; min-width:100px;">
                 <input id="hostNewResLabel" placeholder="название" style="flex:1; min-width:100px;">
-                <select id="hostNewResUnit"><option value="months">Месяцы</option><option value="days">Дни</option><option value="yesno">Да/Нет</option></select>
+                <select id="hostNewResUnit">${resourceUnitOptions()}</select>
                 <input type="number" id="hostNewResAmount" placeholder="0" style="width:70px;">
                 <button class="btn btn-sm btn-primary" onclick="actionHostAddResource()">+ Добавить</button>
             </div>
