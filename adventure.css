@@ -1,0 +1,20 @@
+/* Personal outline is the outside frame; game status retains separate cues inside. */
+.ptable-card,.host-strip,.player-list .lobby-player-card,#myCardPanel{border:2px solid var(--player-outline,#4a4e28)}
+.ptable-card.speaking{border-color:var(--player-outline,#4a4e28);box-shadow:inset 0 0 0 2px var(--hazard)}
+.ptable-card.nominated{border-color:var(--player-outline,#4a4e28);box-shadow:inset 0 -4px var(--danger)}
+.ptable-card.speaking.nominated{box-shadow:inset 0 0 0 2px var(--hazard),inset 0 -6px var(--danger)}
+.ptable-card.i-voted{border-color:var(--player-outline,#4a4e28)}
+.ptable-card.eliminated{filter:none;opacity:.65}
+.player-list .lobby-player-card{border-radius:8px;padding:8px;margin-bottom:7px}
+[data-theme="medieval"]{--void:#19141c;--void-2:#29202b;--paper:#f3e5cd;--hazard:#d5ad59;--danger:#c65d57;--moss:#878f69;--ok:#8ca76a;background:radial-gradient(ellipse at top,#3a293d 0%,var(--void) 65%)}
+[data-theme="medieval"] h1,[data-theme="medieval"] h2,[data-theme="medieval"] h3{font-family:Georgia,'Times New Roman',serif;letter-spacing:.025em}
+[data-theme="medieval"] .hazard-strip{height:5px;background:linear-gradient(90deg,transparent,#d5ad59 20%,#eee0b0 50%,#d5ad59 80%,transparent)}
+[data-theme="medieval"] .panel{border-color:#65503e;background:linear-gradient(140deg,#2d2431,#241e28)}
+[data-theme="medieval"] #myCardPanel{border-color:var(--player-outline,#65503e)}
+[data-theme="medieval"] .workspace-tabs{border-color:#65503e;background:#201922}
+[data-theme="medieval"] .workspace-tabs button[aria-selected="true"]{background:#645035;color:#fff4df}
+[data-theme="medieval"] .prop-list li{background:#211c25;border-color:#665139}
+[data-theme="medieval"] .prop-tag{color:#e9c37c}
+[data-theme="medieval"] #scenarioPanelGame,[data-theme="medieval"] .panel>p{white-space:pre-line;line-height:1.55}
+[data-theme="medieval"] .btn-primary{background:#d5ad59;color:#211723}
+#adventurePoolNote{font-size:12px;line-height:1.5;padding:10px 0;color:var(--paper)}
