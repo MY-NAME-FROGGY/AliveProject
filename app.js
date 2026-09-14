@@ -315,7 +315,13 @@ async function dbSetCustomization(roomCode, playerId, patch) {
     if (error) {
         console.error('Ошибка сохранения кастомизации:', error);
         alert('Не удалось сохранить: ' + error.message);
+        return;
     }
+    const player = state.players.find(p => p.id === playerId);
+    if (player) Object.assign(player, patch);
+    if (window.AliveAdventure) window.AliveAdventure.refresh();
+    const picker = document.getElementById('customizationPicker');
+    if (picker) picker.innerHTML = renderCustomizationPicker();
 }
 
 async function actionSetAvatar(a) { await dbSetCustomization(state.currentRoomCode, state.playerId, { avatar: a }); }
@@ -341,7 +347,11 @@ function renderCustomizationPicker() {
 }
 
 function avatarChip(p) {
-    return `<div class="ptable-avatar" style="border-color:${p.outline_color || '#4a4e28'};">${escapeHtml(p.avatar || '')}</div>`;
+    return `<div class="ptable-avatar" style="border-color:${playerOutline(p)};">${escapeHtml(p.avatar || '')}</div>`;
+}
+
+function playerOutline(p) {
+    return /^#[0-9a-f]{6}$/i.test(p?.outline_color || '') ? p.outline_color : '#4a4e28';
 }
 
 function nameColorStyle(p) {
@@ -473,7 +483,7 @@ async function dbFetchCharacterPool() {
     const pageSize = 1000;
     while (true) {
         const { data, error } = await supabaseClient.from('character_pool')
-            .select('id,category,text,value,action_type,target_type,effect_key,effect_params,target_kind').order('id')
+            .select('id,category,text,value,action_type,target_type,effect_key,effect_params,target_kind,scenario_tag').order('id')
             .eq('is_active', true)
             .range(from, from + pageSize - 1);
         if (error) throw error;
@@ -482,7 +492,11 @@ async function dbFetchCharacterPool() {
         if (data.length < pageSize) break;
         from += pageSize;
     }
-    return all;
+    const { data: scenario, error } = state.room?.scenario_id
+        ? await supabaseClient.from('scenarios').select('character_pool_tag').eq('id', state.room.scenario_id).maybeSingle()
+        : { data: null, error: null };
+    if (error) throw error;
+    return all.filter(c => (c.scenario_tag || null) === (['special_condition','goal'].includes(c.category) ? null : scenario?.character_pool_tag || null));
 }
 
 async function dbCardsExist(roomCode) {
@@ -1099,9 +1113,9 @@ function renderPlayerRow(p, room, isHost) {
     const timedOut = p.timeout_until && new Date(p.timeout_until) > new Date();
 
     return `
-        <li>
+        <li class="lobby-player-card" data-player-id="${escapeHtml(p.id)}" style="--player-outline:${playerOutline(p)};">
             <span style="display:flex; align-items:center; gap:8px;">
-                ${p.avatar ? `<span style="font-size:18px;">${p.avatar}</span>` : ''}
+                ${p.avatar ? `<span style="font-size:18px;">${escapeHtml(p.avatar)}</span>` : ''}
                 <span class="player-name" style="${nameColorStyle(p)}">${p.seat_number ? '№' + p.seat_number + ' ' : ''}${escapeHtml(p.name)}${isMe ? ' (Вы)' : ''}</span>
                 ${isHostRow ? '<span class="host-badge">Ведущий</span>' : ''}
                 <span class="badge ${p.is_ready ? 'badge-ready' : 'badge-notready'}">${p.is_ready ? 'Готов' : 'Не готов'}</span>
@@ -1953,7 +1967,7 @@ async function updateGameDynamic() {
     const hostP = state.players.find(p => p.id === room.host_id);
     const hostEl = document.getElementById('hostStrip');
     if (hostEl) {
-        hostEl.innerHTML = hostP ? `<div class="host-strip">
+        hostEl.innerHTML = hostP ? `<div class="host-strip" data-player-id="${escapeHtml(hostP.id)}" style="--player-outline:${playerOutline(hostP)};">
             ${avatarChip(hostP)}
             <div style="flex:1;"><span class="player-name" style="${nameColorStyle(hostP)}">${hostP.seat_number ? '№' + hostP.seat_number + ' ' : ''}${escapeHtml(hostP.name)}${hostP.id === state.playerId ? ' (Вы)' : ''}</span></div>
             <span class="host-badge">Ведущий</span>
@@ -1994,7 +2008,7 @@ async function updateGameDynamic() {
                     <button class="btn btn-ghost btn-sm" onclick="actionTimeout('${p.id}')">Таймаут</button>
                 </div>` : '';
 
-            return `<div class="ptable-card${isSpeaking ? ' speaking' : ''}${isNominated ? ' nominated' : ''}${isEliminated ? ' eliminated' : ''}">
+            return `<div class="ptable-card${isSpeaking ? ' speaking' : ''}${isNominated ? ' nominated' : ''}${isEliminated ? ' eliminated' : ''}" data-player-id="${escapeHtml(p.id)}" style="--player-outline:${playerOutline(p)};">
                 <div class="ptable-card-head">
                     ${avatarChip(p)}
                     <div class="ptable-name" style="${nameColorStyle(p)}">${p.seat_number ? '№' + p.seat_number + ' ' : ''}${escapeHtml(p.name)}${isMe ? ' (Вы)' : ''}</div>
