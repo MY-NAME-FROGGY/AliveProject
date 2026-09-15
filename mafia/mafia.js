@@ -3,6 +3,7 @@
  const $=id=>document.getElementById(id),esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  const db=w.supabase.createClient(w.MAFIA_CONFIG.url,w.MAFIA_CONFIG.key);
  let session,game,roles={},labels={},mediaConfigured=false,room=null,connectedEpoch=null,mediaWanted=false,connecting=false,polling=false,actionBusy=false,settingsKey='',actionKey='';let mobilePhase=null;
+ let audioMuted=false;const remoteAudio=new Map();
  const apiURL=w.MAFIA_CONFIG.url+'/functions/v1/mafia';
  function notice(text){$('notice').textContent=text;$('notice').hidden=false;clearTimeout(notice.timer);notice.timer=setTimeout(()=>$('notice').hidden=true,9000);}
  async function api(op,data={}){const auth=await db.auth.getSession();session=auth.data.session;if(!session)throw Error('Сессия истекла. Обновите страницу.');const response=await fetch(apiURL,{method:'POST',headers:{Authorization:'Bearer '+session.access_token,apikey:w.MAFIA_CONFIG.key,'Content-Type':'application/json'},body:JSON.stringify({op,code:game?.code,...data})});const result=await response.json();if(!response.ok||result.error)throw Error(result.error||'Не удалось выполнить действие');if(result.game){game=result.game;localStorage.setItem('mafiaRoom',game.code);}if(result.mediaConfigured!==undefined)mediaConfigured=result.mediaConfigured;return result;}
@@ -15,7 +16,8 @@
   const current=new Map([...$('videoGrid').children].map(el=>[el.dataset.id,el]));
   for(const p of game.players){let tile=current.get(p.id);if(!tile){tile=document.createElement('article');tile.dataset.id=p.id;tile.innerHTML='<div class="player-placeholder"><b></b><span></span></div><div class="video-slot"></div><div class="player-name"><strong></strong><span class="player-badge"></span></div>';$('videoGrid').append(tile);}current.delete(p.id);tile.className='player-tile'+(p.id===game.me.id?' me':'')+(!p.alive?' dead':'');tile.querySelector('.player-placeholder b').textContent=String(p.seat).padStart(2,'0');tile.querySelector('.player-placeholder span').textContent=!p.alive?'Наблюдатель':game.phase==='night'&&!game.me.nightPeers.includes(p.id)?'Город спит':'Ожидаем камеру';tile.querySelector('strong').textContent=p.name+(p.id===game.me.id?' · Вы':'');tile.querySelector('.player-badge').textContent=game.phase==='finished'?roles[p.role]?.[0]||'':game.phase==='lobby'?(p.ready?'ГОТОВ':'В ЛОББИ'):p.silenced?'БЕЗ ГОЛОСА':p.alibi?'АЛИБИ':'';}
   for(const tile of current.values())tile.remove();
-  $('toolbar').innerHTML=`<button class="${room?.state==='connected'?'':'primary'}" onclick="Mafia.camera()">${room?.state==='connected'?'Камера подключена':'Подключить камеру'}</button><button onclick="Mafia.microphone()" ${!room||!game.media.audio?'disabled':''}>${room?.localParticipant?.isMicrophoneEnabled?'Выключить микрофон':'Включить микрофон'}</button><button onclick="Mafia.audio()">Включить звук</button>${game.phase==='lobby'?`<button class="primary" onclick="Mafia.ready()">${me.ready?'Не готов':'Я готов'}</button>${host?'<button onclick="Mafia.start()">Начать партию</button>':''}`:host&&game.phase!=='finished'?`<button onclick="Mafia.pause()">${game.paused?'Продолжить':'Пауза'}</button>`:''}<button onclick="Mafia.exit()">В меню</button>`;
+  $('toolbar').innerHTML=`<button class="${room?.state==='connected'?'':'primary'}" onclick="Mafia.camera()">${room?.state==='connected'?'Камера подключена':'Подключить камеру'}</button><button onclick="Mafia.microphone()" ${!room||!game.media.audio?'disabled':''}>${room?.localParticipant?.isMicrophoneEnabled?'Выключить микрофон':'Включить микрофон'}</button><button id="audioToggle" onclick="Mafia.audio()" aria-describedby="audioStatus">Включить звук</button>${game.phase==='lobby'?`<button class="primary" onclick="Mafia.ready()">${me.ready?'Не готов':'Я готов'}</button>${host?'<button onclick="Mafia.start()">Начать партию</button>':''}`:host&&game.phase!=='finished'?`<button onclick="Mafia.pause()">${game.paused?'Продолжить':'Пауза'}</button>`:''}<button onclick="Mafia.exit()">В меню</button><span id="audioStatus" class="hint" role="status"></span>`;
+  renderAudioControls();
   $('myRole').innerHTML=game.me.role?`<p class="eyebrow">ТОЛЬКО ДЛЯ ВАС</p><div class="role-name">${esc(roles[game.me.role]?.[0])}</div><p class="hint">${esc(roles[game.me.role]?.[3])}</p>`:'<h3>Ваша роль</h3><p class="muted">Появится после начала партии. Создатель комнаты тоже играет и не знает чужих ролей.</p>';
   $('privateInfo').innerHTML=game.me.inbox.length?game.me.inbox.slice(-6).reverse().map(m=>`<div class="private-note"><small>Ночь ${m.round}</small><br>${esc(m.text)}</div>`).join(''):'<p class="hint">Результаты ваших проверок появятся здесь.</p>';
   $('events').innerHTML=game.events.slice(-8).reverse().map(e=>`<div class="event"><small>Раунд ${e.round}</small><br>${esc(e.text)}</div>`).join('')||'<p class="hint">История начнётся вместе с партией.</p>';
@@ -40,15 +42,29 @@
  }
  function targets(){const kind=$('nightKind')?.value;if(!kind)return;const count=['alert','ignite'].includes(kind)?0:kind==='compare'?2:1;const available=game.players.filter(p=>(kind==='autopsy'?!p.alive:p.alive)&&(p.id!==game.me.id||['heal','pardon'].includes(kind)));$('nightTargets').innerHTML=Array.from({length:count},(_,i)=>`<select id="nightTarget${i}" aria-label="Цель ${i+1}">${available.map(p=>`<option value="${p.id}">№${p.seat} ${esc(p.name)}</option>`).join('')}</select>`).join('');}
  function clock(){if(!$('phaseClock')||!game)return;const n=Math.max(0,Math.ceil((game.deadline-Date.now())/1000));$('phaseClock').textContent=game.paused?'Ⅱ':!game.deadline?'':n?Math.floor(n/60)+':'+String(n%60).padStart(2,'0'):'Обработка…';}
- function attach(track,participant){if(track.kind==='audio'){if(participant.identity===game.me.id)return;const el=track.attach();el.dataset.track=track.sid||'';$('audioTracks').append(el);return;}const tile=[...$('videoGrid').children].find(el=>el.dataset.id===participant.identity);if(tile){const video=track.attach();video.autoplay=true;video.playsInline=true;video.muted=participant.identity===game.me.id;tile.querySelector('.video-slot').replaceChildren(video);}}
+ function mediaConnected(){return room?.state==='connected'&&connectedEpoch===game?.epoch;}
+ function renderAudioControls(){const button=$('audioToggle'),status=$('audioStatus');if(!button||!game)return;
+  const connected=mediaConnected(),allowed=game.media.subscribe,on=connected&&allowed&&!audioMuted&&room.canPlaybackAudio;
+  button.disabled=!connected||!allowed;button.textContent=!allowed?'Звук недоступен':on?'Выключить звук':'Включить звук';button.setAttribute('aria-pressed',String(!!on));
+  status.textContent=!connected?'Для звука подключите камеру.':!allowed?(game.phase==='night'?'Ночью чужой звук скрыт для вашей роли.':'Выбывшие игроки не слышат живых до конца партии.'):audioMuted?'Звук выключен у вас.':!room.canPlaybackAudio?'Браузер ожидает нажатия «Включить звук».':remoteAudio.size?'Звук включён.':'Звук включён. Ожидаем микрофоны других игроков.';
+ }
+ function applyAudioVolume(){for(const [track,el] of remoteAudio){track.setVolume(audioMuted?0:1);el.muted=audioMuted;}}
+ async function toggleAudio(){if(!mediaConnected())throw Error('Сначала подключите камеру');if(!game.media.subscribe)throw Error('Сейчас чужой звук недоступен по правилам игры');
+  if(!audioMuted&&room.canPlaybackAudio){audioMuted=true;applyAudioVolume();renderAudioControls();return;}
+  audioMuted=false;applyAudioVolume();
+  try{await room.startAudio();if(!room.canPlaybackAudio)throw Error('Браузер заблокировал звук. Разрешите воспроизведение звука для сайта и повторите.');}
+  finally{applyAudioVolume();renderAudioControls();}
+ }
+ function attach(track,participant){if(track.kind==='audio'){if(participant.identity===game.me.id||remoteAudio.has(track))return;track.setVolume(audioMuted?0:1);const el=track.attach();el.muted=audioMuted;el.dataset.track=track.sid||'';remoteAudio.set(track,el);$('audioTracks').append(el);renderAudioControls();return;}const tile=[...$('videoGrid').children].find(el=>el.dataset.id===participant.identity);if(tile){const video=track.attach();video.autoplay=true;video.playsInline=true;video.muted=participant.identity===game.me.id;tile.querySelector('.video-slot').replaceChildren(video);}}
  async function connect(){if(connecting||!game)return;connecting=true;mediaWanted=true;try{
-  const result=await api('media');if(room)await room.disconnect();$('audioTracks').replaceChildren();document.querySelectorAll('.video-slot').forEach(el=>el.replaceChildren());
+  const result=await api('media');if(room)await room.disconnect();remoteAudio.clear();$('audioTracks').replaceChildren();document.querySelectorAll('.video-slot').forEach(el=>el.replaceChildren());
   const lk=w.LivekitClient;if(!lk)throw Error('Не загрузилась библиотека видеосвязи');
   room=new lk.Room({adaptiveStream:true,dynacast:true,videoCaptureDefaults:{resolution:lk.VideoPresets.h360.resolution}});
   room.on(lk.RoomEvent.TrackSubscribed,(track,pub,p)=>attach(track,p));
-  room.on(lk.RoomEvent.TrackUnsubscribed,track=>track.detach().forEach(el=>el.remove()));
+  room.on(lk.RoomEvent.TrackUnsubscribed,track=>{track.detach().forEach(el=>el.remove());remoteAudio.delete(track);renderAudioControls();});
   room.on(lk.RoomEvent.LocalTrackPublished,pub=>{if(pub.track)attach(pub.track,room.localParticipant);});
-  room.on(lk.RoomEvent.Disconnected,()=>{connectedEpoch=null;});
+  room.on(lk.RoomEvent.AudioPlaybackStatusChanged,renderAudioControls);
+  room.on(lk.RoomEvent.Disconnected,()=>{connectedEpoch=null;renderAudioControls();});
   await room.connect(result.connection.url,result.connection.token);await room.localParticipant.setCameraEnabled(true);connectedEpoch=result.connection.epoch;
   if(game.media.audio)await room.localParticipant.setMicrophoneEnabled(true);render();
  }catch(e){connectedEpoch=null;mediaWanted=false;throw e;}finally{connecting=false;}}
@@ -56,13 +72,13 @@
  w.Mafia={
   create:()=>run(async()=>{const name=$('playerName').value.trim();await api('create',{name});localStorage.setItem('playerName',name);shell();}),
   join:()=>run(async()=>{const name=$('playerName').value.trim(),code=$('roomCode').value.trim();await api('join',{name,code});localStorage.setItem('playerName',name);shell();}),
-  camera:()=>run(connect),microphone:()=>run(async()=>{if(room&&game.media.audio)await room.localParticipant.setMicrophoneEnabled(!room.localParticipant.isMicrophoneEnabled);}),audio:()=>run(async()=>{if(room)await room.startAudio();}),
+  camera:()=>run(connect),microphone:()=>run(async()=>{if(room&&game.media.audio)await room.localParticipant.setMicrophoneEnabled(!room.localParticipant.isMicrophoneEnabled);}),audio:()=>run(toggleAudio),
   ready:()=>run(async()=>{await api('ready',{ready:!game.players.find(p=>p.id===game.me.id).ready});}),start:()=>run(async()=>{await api('start');}),
   pause:()=>run(async()=>{await api(game.paused?'resume':'pause');}),
   settings:()=>run(async()=>{const settings=structuredClone(game.settings);settings.counts={};document.querySelectorAll('[data-role]').forEach(el=>settings.counts[el.dataset.role]=Number(el.value));for(const k of ['daySeconds','voteSeconds','nightSeconds','bonusSeconds','maxPlayers'])settings[k]=Number($('setting-'+k).value);await api('settings',{settings});}),
   targets,mobile,act:()=>run(async()=>{const kind=$('nightKind').value,targets=[...document.querySelectorAll('#nightTargets select')].map(el=>el.value);await api('act',{kind,targets});notice('Ночной выбор сохранён');}),
   vote:()=>run(async()=>{const target=$('voteTarget').value;await api('act',{kind:'vote',targets:target?[target]:[]});}),
-  exit:()=>run(async()=>{if(!confirm(game.phase==='lobby'?'Покинуть комнату?':'Выйти в меню? Без вашей камеры партия будет ожидать подключения.'))return;if(game.phase==='lobby')await api('leave');mediaWanted=false;if(room)await room.disconnect();room=null;localStorage.removeItem('mafiaRoom');home();})
+  exit:()=>run(async()=>{if(!confirm(game.phase==='lobby'?'Покинуть комнату?':'Выйти в меню? Без вашей камеры партия будет ожидать подключения.'))return;if(game.phase==='lobby')await api('leave');mediaWanted=false;if(room)await room.disconnect();room=null;remoteAudio.clear();$('audioTracks').replaceChildren();localStorage.removeItem('mafiaRoom');home();})
  };
  async function boot(){try{let auth=await db.auth.getSession();session=auth.data.session;if(!session){auth=await w.AliveAuth.signInAnonymously(db);if(auth.error)throw auth.error;session=auth.data.session;}const catalog=await api('catalog');roles=catalog.roles;labels=catalog.actions;const saved=localStorage.getItem('mafiaRoom');if(saved){try{await api('state',{code:saved});render();}catch{localStorage.removeItem('mafiaRoom');home();}}else home();setInterval(poll,2500);setInterval(clock,250);}catch(e){$('entry').innerHTML='<p>'+esc(e.message)+'</p><button onclick="location.reload()">Повторить</button>';}}
  boot();
