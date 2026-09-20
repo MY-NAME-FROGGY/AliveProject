@@ -28,11 +28,13 @@
   }
 
   async function signIn(client) {
-    const app = document.getElementById('app');
-    app.innerHTML = '<h1>ОСТАТЬСЯ <span>В ЖИВЫХ</span></h1>' +
+    const app = document.getElementById('app') || document.getElementById('mafiaApp');
+    if (!app) throw new Error('Не найден контейнер приложения. Обновите страницу с очисткой кэша.');
+    const mafia = app.id === 'mafiaApp';
+    app.innerHTML = (mafia ? '<div class="welcome"><p class="eyebrow">ОНЛАЙН-МАФИЯ</p><h1>Подключаемся<br><em>к городу.</em></h1>' : '<h1>ОСТАТЬСЯ <span>В ЖИВЫХ</span></h1>') +
       '<div class="panel" style="max-width:460px;margin:24px auto;padding:16px">' +
-      '<h2>Вход в игру</h2><p id="authStatus" role="status" aria-live="polite">Пройдите короткую проверку безопасности.</p>' +
-      '<div id="authCaptcha"></div><button id="authRetry" class="btn btn-primary" type="button" hidden style="margin-top:12px">Повторить проверку</button></div>';
+      '<h2>' + (mafia ? 'Вход в «Мафию»' : 'Вход в игру') + '</h2><p id="authStatus" role="status" aria-live="polite">Пройдите короткую проверку безопасности.</p>' +
+      '<div id="authCaptcha"></div><button id="authRetry" class="btn btn-primary" type="button" hidden style="margin-top:12px">Повторить проверку</button></div>' + (mafia ? '</div>' : '');
     const api = await loadTurnstile();
     return new Promise((resolve, reject) => {
       let widget, sending = false, finished = false;
