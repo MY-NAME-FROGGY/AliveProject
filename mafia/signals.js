@@ -4,10 +4,10 @@
  const labels={turn:'Ваш ход',warning:'Осталось пять секунд',night:'Город засыпает',dawn:'Рассвет'};
  const stored=Number(localStorage.getItem('mafiaSignalVolume')??40);
  let volume=Number.isFinite(stored)?Math.max(0,Math.min(100,stored)):40,enabled=localStorage.getItem('mafiaSignals')==='on';
- let current=null,lastPhase=null,lastWake=null,lastWarning=null,lastMine=false,generation=0;
+ let current=null,lastPhase=null,lastWake=null,lastWarning=null,lastMine=false,generation=0,delayed=null;
  const pool=new Map();
  function status(text){const el=document.getElementById('signalStatus');if(el)el.textContent=text;}
- function stop(){generation++;if(current){current.pause();current.currentTime=0;current=null;}}
+ function stop(){generation++;if(delayed){clearTimeout(delayed);delayed=null;}if(current){current.pause();current.currentTime=0;current=null;}}
  async function play(kind,test=false){
   if(!files[kind]||(!test&&!enabled))return;
   stop();const ticket=generation;
@@ -26,13 +26,13 @@
   if(!game){stop();lastPhase=lastWake=lastWarning=null;lastMine=false;return;}
   if(game.paused){stop();return;}
   const phase=[game.code,game.round,game.phase].join(':'),wake=phase+':'+game.epoch;
-  if(phase!==lastPhase){const hadPhase=lastPhase!==null;lastPhase=phase;lastWake=null;lastWarning=null;lastMine=false;
+  let enteredNight=false;if(phase!==lastPhase){const hadPhase=lastPhase!==null;lastPhase=phase;lastWake=null;lastWarning=null;lastMine=false;
    const panel=document.getElementById('soundSettings');if(game.phase!=='lobby'&&panel?.firstElementChild)panel.firstElementChild.open=false;
-   if(game.phase==='night'&&(game.wake?.index===0||!game.wake))play('night');
+   if(game.phase==='night'&&(game.wake?.index===0||!game.wake)){enteredNight=true;play('night');}
    else if(hadPhase&&(game.phase==='day'||game.phase==='finished'))play('dawn');
    else if(hadPhase&&game.phase==='voting')play('turn');
   }
-  if(wake!==lastWake){lastWake=wake;if(game.phase==='night'){if(game.wake?.mine)play('turn');else if(lastMine)play('night');}lastMine=!!game.wake?.mine;}
+  if(wake!==lastWake){lastWake=wake;if(game.phase==='night'){if(game.wake?.mine){if(enteredNight){const expected=wake;delayed=setTimeout(()=>{delayed=null;if(lastWake===expected&&lastMine)play('turn');},1800);}else play('turn');}else if(lastMine)play('night');}lastMine=!!game.wake?.mine;}
   const deadline=game.wake?.deadline||game.deadline,remaining=deadline-now,warning=wake+':'+deadline;
   if(game.phase==='night'&&game.wake?.mine&&remaining>0&&remaining<=5000&&warning!==lastWarning){lastWarning=warning;play('warning');}
  }
