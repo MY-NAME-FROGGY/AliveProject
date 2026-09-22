@@ -31,3 +31,4 @@ button{background:#392b2b;border-radius:7px}.primary{background:#b85743;color:#f
 .chronicle-undo{display:block;margin-top:8px;padding:6px 10px;font-size:12px;border-color:#d8a472;color:#ffe3c7}
 .master-actions{display:flex;gap:6px;flex-wrap:wrap}.master-actions button{min-height:34px}
 .host-recovery textarea,.host-recovery select{width:100%;margin:8px 0;padding:9px}
+.chronicle-filters{display:flex;gap:6px;margin:8px 0}.chronicle-filters input{min-width:0;flex:1}.chronicle-filters select{max-width:130px}
