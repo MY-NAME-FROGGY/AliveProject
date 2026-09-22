@@ -218,23 +218,9 @@ async function dbCreateRoom(hostName) {
 }
 
 async function dbJoinRoom(code, name) {
-    const { data: room, error: roomErr } = await supabaseClient.from('rooms').select('*').eq('code', code).maybeSingle();
-    if (roomErr || !room) throw new Error('Комната не найдена. Проверьте код.');
-    if (room.phase !== 'lobby') throw new Error('Игра уже началась, присоединиться нельзя.');
-
-    const { data: players, error: playersErr } = await supabaseClient.from('players').select('*').eq('room_code', code);
-    if (playersErr) throw playersErr;
-
-    const already = players.find(p => p.id === state.playerId);
-    if (!already) {
-        const max = room.settings?.max_players;
-        if (max && players.length >= max) throw new Error('Комната заполнена.');
-        const { error: insErr } = await supabaseClient.from('players').insert({
-            id: state.playerId, room_code: code, name, is_ready: false
-        });
-        if (insErr) throw insErr;
-    }
-    return room;
+    const {data, error} = await supabaseClient.rpc('alive_join', {p_code: code, p_name: name});
+    if (error) throw error;
+    return data;
 }
 
 async function dbFetchRoom(code) {
@@ -1437,6 +1423,7 @@ function renderGameTable() {
                     <div id="hostStrip"></div>
                     <div class="ptable-grid" id="gamePlayersList"></div>
                 </div>
+                ${renderGameChatPanel(room)}
             </div>
             <div class="game-aside">
                 ${isHost ? renderHostToolsPanel(room) : `<div class="panel" id="myCardPanel">
@@ -1445,7 +1432,6 @@ function renderGameTable() {
                 </div>`}
             </div>
         </div>
-        ${renderGameChatPanel(room)}
         ${isHost ? `<button class="btn btn-ghost" style="margin-top:16px;" onclick="actionResetToLobby()">Вернуться в лобби</button>` : ''}
     `;
 
@@ -1563,7 +1549,7 @@ function renderGameChatPanel(room) {
     const others = state.players.filter(p => p.id !== state.playerId);
 
     return `
-        <div class="panel">
+        <div class="panel game-chat-panel">
             <div class="section-title"><h2>Чат</h2>
                 ${privateEnabled ? `
                     <select id="gameChatRecipient" onchange="switchGameChatRecipient()" style="width:auto; margin:0;">
@@ -1989,7 +1975,7 @@ async function updateGameDynamic() {
                                 (room.current_phase === 'reveal' && revealActiveId === p.id);
 
             const canNominate = room.current_phase === 'nomination' && !isMe && !myNomination && state.playerId !== room.host_id && !isEliminated;
-            const canVote = room.current_phase === 'voting' && !isMe && isNominated && state.playerId !== room.host_id && !state.myVoteThisRound;
+            const canVote = room.current_phase === 'voting' && !isMe && !isEliminated && isNominated && state.playerId !== room.host_id && state.players.find(x => x.id === state.playerId)?.is_alive !== false && !state.myVoteThisRound && !state.voteBlocked;
 
             const traitsHtml = (revealedTraits[p.id] || []).map(t => 
                 `<div style="font-size:11px; color:#b7b190; margin-top:2px;"><b>${t.cat}:</b> ${escapeHtml(t.text)}</div>`
@@ -2119,9 +2105,11 @@ async function refreshEventsFeed() {
     const visible = events.filter(e => !e.private || isHost || e.target_id === state.playerId);
     if (visible.length === 0) { el.innerHTML = '<li class="muted-note">Пока ничего не произошло.</li>'; return; }
 
+    const latest = events[0]?.id;
     el.innerHTML = visible.map(e => {
         const targetName = e.target_id ? (state.players.find(p => p.id === e.target_id) || {}).name : null;
-        return `<li>${eventIcon(e.type)} ${escapeHtml(e.text)}${targetName ? `<span class="muted-note">(${escapeHtml(targetName)})</span>` : ''}${e.private ? '<span class="muted-note">🔒 лично</span>' : ''}</li>`;
+        const undoable = isHost && e.id === latest && e.actor_id === state.playerId && ['host.card','host.bunker'].includes(e.event_key);
+        return `<li><small class="muted-note">№${e.id} · ${new Date(e.created_at).toLocaleTimeString('ru')}</small><br>${eventIcon(e.type)} ${escapeHtml(e.text)}${targetName ? `<span class="muted-note">(${escapeHtml(targetName)})</span>` : ''}${e.private ? '<span class="muted-note">🔒 лично</span>' : ''}${undoable ? `<br><button class="btn btn-ghost btn-sm" onclick="AliveGame.undo(${e.id})">↶ Обратить вспять</button>` : ''}</li>`;
     }).join('');
 }
 
@@ -2908,7 +2896,7 @@ async function actionLeaveRoom() {
 
     try {
         if (isHost) await supabaseClient.from('rooms').delete().eq('code', code);
-        else await supabaseClient.from('players').delete().eq('id', state.playerId).eq('room_code', code);
+        else if (state.room?.phase === 'lobby') await supabaseClient.from('players').delete().eq('id', state.playerId).eq('room_code', code);
     } catch (e) { console.error(e); }
 
     saveRoomCode(null);
