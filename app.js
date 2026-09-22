@@ -590,7 +590,7 @@ async function dbSaveNote(roomCode, playerId, text) {
 
 async function dbFetchEvents(roomCode) {
     const { data, error } = await supabaseClient.from('game_events')
-        .select('*').eq('room_code', roomCode).order('created_at', { ascending: false }).limit(30);
+        .select('*').eq('room_code', roomCode).order('id', { ascending: false }).limit(30);
     if (error) { console.error(error); return []; }
     return data || [];
 }
@@ -2108,7 +2108,7 @@ async function refreshEventsFeed() {
     const latest = events[0]?.id;
     el.innerHTML = visible.map(e => {
         const targetName = e.target_id ? (state.players.find(p => p.id === e.target_id) || {}).name : null;
-        const undoable = isHost && e.id === latest && e.actor_id === state.playerId && ['host.card','host.bunker'].includes(e.event_key);
+        const undoable = isHost && e.id === latest && e.actor_id === state.playerId && ['host.card','host.bunker','host.moderation'].includes(e.event_key);
         return `<li><small class="muted-note">№${e.id} · ${new Date(e.created_at).toLocaleTimeString('ru')}</small><br>${eventIcon(e.type)} ${escapeHtml(e.text)}${targetName ? `<span class="muted-note">(${escapeHtml(targetName)})</span>` : ''}${e.private ? '<span class="muted-note">🔒 лично</span>' : ''}${undoable ? `<br><button class="btn btn-ghost btn-sm" onclick="AliveGame.undo(${e.id})">↶ Обратить вспять</button>` : ''}</li>`;
     }).join('');
 }
