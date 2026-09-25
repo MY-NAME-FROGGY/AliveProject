@@ -20,7 +20,7 @@ function auditEntries(old:any,s:any,uid:string|null,op:string,body:any){const ac
  else if(op==='camera_status'&&old.cameraPaused&&!s.cameraPaused)add('camera_resume','Камеры восстановлены, таймер автоматически продолжен');
  else if(op==='disconnect')add('player_disconnected',body.reason==='pagehide'?'Игрок обновил или закрыл страницу':'Игрок вышел из игрового экрана',{reason:String(body.reason||'unknown')});
  else if(op==='ready')add(body.ready?'player_ready':'player_unready',body.ready?'Игрок подтвердил готовность':'Игрок снял готовность');
- else if(op==='settings')add('settings_changed','Владелец изменил настройки партии',{gameMode:s.settings.gameMode,cameraMode:s.settings.cameraMode,maxPlayers:s.settings.maxPlayers,counts:s.settings.counts});
+ else if(op==='settings')add('settings_changed','Владелец изменил настройки партии',{gameMode:s.settings.gameMode,cameraMode:s.settings.cameraMode,strictCameraCheck:s.settings.strictCameraCheck!==false,maxPlayers:s.settings.maxPlayers,counts:s.settings.counts});
  else if(op==='start')add('game_started','Партия началась',{players:s.players.filter((p:any)=>!p.moderator).length});
   else if(op==='act'){const key=body.kind==='vote'?'day_vote':body.kind==='nominate'?'player_nominated':body.kind==='skip_nomination'?'nomination_skipped':'role_action';const summary=body.kind==='vote'?'Игрок отправил дневной голос':body.kind==='nominate'?'Игрок выдвинул кандидата':body.kind==='skip_nomination'?'Игрок пропустил выдвижение':'Игрок отправил действие роли: '+(ACTION_LABELS[body.kind]||body.kind);add(key,summary,{action:body.kind,targets:namedTargets(old,s,body.targets||[]),epoch:body.epoch});}
  else if(op==='pause')add('game_paused','Владелец поставил игру на паузу');
@@ -45,9 +45,10 @@ async function processRoom(code:string,uid:string|null,op:string,body:any={}){
   const roster=s.players.filter((p:any)=>!(s.settings.gameMode==='hosted'&&p.id===s.host));
   const rosterReady=roster.length>=5&&roster.every((p:any)=>p.ready);
   const readyAllowed=!(s.settings.gameMode==='hosted'&&uid===s.host);
-  const cachedReady=op==='ready'&&readyAllowed&&body.ready&&cameraFresh(player,now);
-  const cachedStart=op==='start'&&rosterReady&&s.players.every((p:any)=>cameraFresh(p,now));
-  const needCameras=media.configured&&(op==='act'||op==='resume'||op==='tick'||(op==='ready'&&readyAllowed&&body.ready&&!cachedReady)||(op==='start'&&rosterReady&&!cachedStart));
+  const strictCameras=s.settings.strictCameraCheck!==false;
+  const cachedReady=strictCameras&&op==='ready'&&readyAllowed&&body.ready&&cameraFresh(player,now);
+  const cachedStart=strictCameras&&op==='start'&&rosterReady&&s.players.every((p:any)=>cameraFresh(p,now));
+  const needCameras=strictCameras&&media.configured&&(op==='act'||op==='resume'||op==='tick'||(op==='ready'&&readyAllowed&&body.ready&&!cachedReady)||(op==='start'&&rosterReady&&!cachedStart));
   if(cachedReady)cameras[uid!]=true;
   if(cachedStart)for(const p of s.players)cameras[p.id]=true;
   if(needCameras){cameras=await media.cameras(s);for(const p of s.players)if(cameras[p.id])p.cameraVerifiedAt=now;}
@@ -61,17 +62,17 @@ async function processRoom(code:string,uid:string|null,op:string,body:any={}){
   else if(op==='live_settings')s=liveSettings(s,uid,body.seconds);
   else if(op==='announce')s=announce(s,uid,body.text,body.target);
   else if(op==='settings')s=changeLobby(s,uid,'settings',body.settings);
-  else if(op==='ready')s=changeLobby(s,uid,'ready',{ready:body.ready},body.ready?!!cameras[uid!]:true);
-  else if(op==='start'){if(!media.configured)throw Error('Сначала подключите LiveKit Cloud');s=startGame(s,uid,cameras,Date.now(),secureRandom);}
-  else if(op==='act'){if(body.epoch!==undefined&&body.epoch!==s.epoch)throw Error('Пробуждение уже изменилось. Обновите выбор.');if(!media.configured||!cameras[uid!])throw Error('Для участия нужна подключённая камера');s=act(s,uid,body.kind,body.targets||[]);}
+  else if(op==='ready')s=changeLobby(s,uid,'ready',{ready:body.ready},!strictCameras||!body.ready||!!cameras[uid!]);
+  else if(op==='start'){if(strictCameras&&!media.configured)throw Error('Сначала подключите LiveKit Cloud');s=startGame(s,uid,cameras,Date.now(),secureRandom);}
+  else if(op==='act'){if(body.epoch!==undefined&&body.epoch!==s.epoch)throw Error('Пробуждение уже изменилось. Обновите выбор.');if(strictCameras&&(!media.configured||!cameras[uid!]))throw Error('Для участия нужна подключённая камера');s=act(s,uid,body.kind,body.targets||[]);}
   else if(op==='pause')s=pause(s,uid,true);
-  else if(op==='resume'){if(s.players.some((p:any)=>p.alive&&!cameras[p.id]))throw Error('Дождитесь подключения камер всех живых игроков');s=pause(s,uid,false);}
+  else if(op==='resume'){if(strictCameras&&s.players.some((p:any)=>p.alive&&!cameras[p.id]))throw Error('Дождитесь подключения камер всех живых игроков');s=pause(s,uid,false);}
    else if(op==='leave')s=changeLobby(s,uid,'leave');
    else if(op==='media'){s.cameraGraceUntil=Math.max(Number(s.cameraGraceUntil)||0,now+RECONNECT_GRACE);player.lastConnectedAt=now;}
-   else if(op==='disconnect'){s.cameraGraceUntil=Math.max(Number(s.cameraGraceUntil)||0,now+RECONNECT_GRACE);player.lastDisconnectedAt=now;if(s.phase==='lobby')player.ready=false;}
+   else if(op==='disconnect'){s.cameraGraceUntil=Math.max(Number(s.cameraGraceUntil)||0,now+RECONNECT_GRACE);player.lastDisconnectedAt=now;if(s.phase==='lobby'&&strictCameras)player.ready=false;}
    else if(op==='tick'){
     if(!['lobby','finished'].includes(s.phase)){
-     const missing=!media.configured||s.players.some((p:any)=>p.alive&&!cameras[p.id]);
+     const missing=strictCameras&&(!media.configured||s.players.some((p:any)=>p.alive&&!cameras[p.id]));
      if(missing&&Date.now()>s.cameraGraceUntil&&!s.paused){s.remaining=Math.max(5000,s.deadline-Date.now());s.paused=true;s.pauseReason='Ожидаем подключения камер';s.cameraPaused=true;}
     if(!missing&&s.cameraPaused){s.deadline=Date.now()+s.remaining;s.paused=false;delete s.pauseReason;delete s.cameraPaused;}
      if(s.settings.gameMode!=='hosted'||s.phase==='night_pause')s=advance(s,Date.now(),secureRandom);
