@@ -2,10 +2,10 @@
  'use strict';
  const recorded=w.MafiaSoundRecordings||{};
  const files={turn:recorded.turn||'01-your-turn.mp3',wake:recorded.wake||'02-wake-up.mp3',warning:recorded.warning||'03-ten-seconds.mp3',sleep:recorded.sleep||'04-sleep.mp3',dawn:recorded.wake||'02-wake-up.mp3'};
- const labels={turn:'Твой ход',wake:'Просыпаемся — три раза',warning:'Осталось десять секунд',sleep:'Засыпаем',dawn:'Город просыпается'};
+ const labels={turn:'Твой ход',wake:'Просыпаемся',warning:'Осталось десять секунд',sleep:'Засыпаем',dawn:'Город просыпается'};
  const stored=Number(localStorage.getItem('mafiaSignalVolume')??40);
  let volume=Number.isFinite(stored)?Math.max(0,Math.min(100,stored)):40,enabled=localStorage.getItem('mafiaSignals')==='on';
- let current=null,lastPhase=null,lastWake=null,lastWarning=null,lastMine=false,generation=0,delayed=null;
+ let current=null,lastPhase=null,lastWake=null,lastWarning=null,lastMine=false,sleptAtPause=false,generation=0,delayed=null;
  const pool=new Map();
  function status(text){const el=document.getElementById('signalStatus');if(el)el.textContent=text;}
  function stop(){generation++;if(delayed){clearTimeout(delayed);delayed=null;}if(current){current.onended=null;current.pause();current.currentTime=0;current=null;}}
@@ -24,16 +24,16 @@
  function setVolume(value){volume=Math.max(0,Math.min(100,Number(value)||0));localStorage.setItem('mafiaSignalVolume',String(volume));if(current)current.volume=volume/100;sync();}
  async function test(){enable(true);await play(document.getElementById('signalSample')?.value||'turn',true);}
  function observe(game,now=Date.now()){
-  if(!game){stop();lastPhase=lastWake=lastWarning=null;lastMine=false;return;}
+  if(!game){stop();lastPhase=lastWake=lastWarning=null;lastMine=false;sleptAtPause=false;return;}
   if(game.paused){stop();return;}
   const phase=[game.code,game.round,game.phase].join(':'),wake=phase+':'+game.epoch;
-  let enteredNight=false;if(phase!==lastPhase){const hadPhase=lastPhase!==null;lastPhase=phase;lastWake=null;lastWarning=null;lastMine=false;
+  let enteredNight=false;if(phase!==lastPhase){const hadPhase=lastPhase!==null;lastPhase=phase;lastWake=null;lastWarning=null;lastMine=false;sleptAtPause=false;
    const panel=document.getElementById('soundSettings');if(game.phase!=='lobby'&&panel?.firstElementChild)panel.firstElementChild.open=false;
   if(game.phase==='night'&&(game.wake?.index===0||!game.wake)){enteredNight=true;play('sleep');}
    else if(hadPhase&&(game.phase==='day'||game.phase==='finished'))play('dawn');
    else if(hadPhase&&game.phase==='voting')play('turn');
   }
-  if(wake!==lastWake){lastWake=wake;if(game.phase==='night'&&game.wake?.key!=='pause'){if(game.wake?.mine){const wakeThenTurn=()=>play('wake',false,3,()=>play('turn'));if(enteredNight){const expected=wake;delayed=setTimeout(()=>{delayed=null;if(lastWake===expected&&lastMine)wakeThenTurn();},1800);}else wakeThenTurn();}else if(game.me?.alive!==false&&!game.me?.moderator&&!enteredNight)play('sleep');}else if(game.phase==='nomination'&&game.nomination?.currentId===game.me?.id)play('turn');lastMine=!!game.wake?.mine;}
+  if(wake!==lastWake){lastWake=wake;if(game.phase==='night'){if(game.wake?.key==='pause'){sleptAtPause=lastMine;if(lastMine)play('sleep');}else if(game.wake?.mine){sleptAtPause=false;const wakeThenTurn=()=>play('wake',false,1,()=>play('turn'));if(enteredNight){const expected=wake;delayed=setTimeout(()=>{delayed=null;if(lastWake===expected&&lastMine)wakeThenTurn();},1800);}else wakeThenTurn();}else{if(game.me?.alive!==false&&!game.me?.moderator&&!enteredNight&&!sleptAtPause)play('sleep');sleptAtPause=false;}}else if(game.phase==='nomination'&&game.nomination?.currentId===game.me?.id)play('turn');lastMine=!!game.wake?.mine;}
   const deadline=game.wake?.deadline||game.deadline,remaining=deadline-now,warning=wake+':'+deadline;
   const personal=game.phase==='night'&&game.wake?.mine||game.phase==='nomination'&&game.nomination?.currentId===game.me?.id;
   if(personal&&remaining>0&&remaining<=10000&&warning!==lastWarning){lastWarning=warning;play('warning');}
