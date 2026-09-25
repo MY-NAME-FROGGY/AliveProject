@@ -8,7 +8,7 @@ const response=(body:unknown,status=200)=>new Response(JSON.stringify(body),{sta
 async function storage(op:string,code:string|null=null,lease:string|null=null,state:unknown=null){const {data,error}=await db.rpc('mafia_storage',{p_op:op,p_code:code,p_lease:lease,p_state:state});if(error)throw Error(error.message);return data;}
 const secureRandom=()=>crypto.getRandomValues(new Uint32Array(1))[0]/4294967296;
 const CAMERA_READY_TTL=120000;
-const RECONNECT_GRACE=30000;
+const RECONNECT_GRACE=60000;
 const cameraFresh=(p:any,now=Date.now())=>Number.isFinite(p.cameraVerifiedAt)&&now-p.cameraVerifiedAt>=0&&now-p.cameraVerifiedAt<=CAMERA_READY_TTL;
 const participant=(old:any,s:any,id:string|null)=>s?.players?.find((p:any)=>p.id===id)||old?.players?.find((p:any)=>p.id===id)||null;
 const namedTargets=(old:any,s:any,ids:any[]=[])=>ids.map(id=>{const p=participant(old,s,String(id));return {id:String(id),seat:p?.seat??null,name:p?.name??'Игрок'};});
@@ -17,6 +17,7 @@ function auditEntries(old:any,s:any,uid:string|null,op:string,body:any){const ac
  else if(op==='join')add(old?.players?.some((p:any)=>p.id===uid)?'player_rejoined':'player_joined',old?.players?.some((p:any)=>p.id===uid)?'Игрок повторно вошёл в комнату':'Игрок вошёл в комнату');
  else if(op==='state'&&body.resume)add('session_restored','Игрок восстановил комнату после обновления страницы');
  else if(op==='media')add('media_connected','Камера и медиасвязь подключаются к текущей фазе',{epoch:s.epoch});
+ else if(op==='camera_status'&&old.cameraPaused&&!s.cameraPaused)add('camera_resume','Камеры восстановлены, таймер автоматически продолжен');
  else if(op==='disconnect')add('player_disconnected',body.reason==='pagehide'?'Игрок обновил или закрыл страницу':'Игрок вышел из игрового экрана',{reason:String(body.reason||'unknown')});
  else if(op==='ready')add(body.ready?'player_ready':'player_unready',body.ready?'Игрок подтвердил готовность':'Игрок снял готовность');
  else if(op==='settings')add('settings_changed','Владелец изменил настройки партии',{gameMode:s.settings.gameMode,cameraMode:s.settings.cameraMode,maxPlayers:s.settings.maxPlayers,counts:s.settings.counts});
@@ -53,7 +54,7 @@ async function processRoom(code:string,uid:string|null,op:string,body:any={}){
    if(op==='join')s=joinGame(s,uid,body.name);
    else if(op==='state'&&body.resume){s.cameraGraceUntil=Math.max(Number(s.cameraGraceUntil)||0,now+RECONNECT_GRACE);player.lastConnectedAt=now;}
    else if(op==='presence')s=presence(s,uid,body.sound);
-   else if(op==='camera_status'){const active=media.configured&&await media.camera(s,uid!);if(active)player.cameraVerifiedAt=now;else delete player.cameraVerifiedAt;}
+   else if(op==='camera_status'){const active=media.configured&&await media.camera(s,uid!);if(active){player.cameraVerifiedAt=now;s.cameraGraceUntil=Math.max(Number(s.cameraGraceUntil)||0,now+RECONNECT_GRACE);}else delete player.cameraVerifiedAt;if(active&&s.cameraPaused){cameras=await media.cameras(s);if(s.players.filter((p:any)=>p.alive).every((p:any)=>cameras[p.id])){s.deadline=now+s.remaining;s.paused=false;delete s.pauseReason;delete s.cameraPaused;}}}
   else if(op==='control')s=control(s,uid,body.command,body.epoch,body.seconds,Date.now(),secureRandom);
   else if(op==='moderate')s=moderate(s,uid,body.command,body.target,body.role,Date.now());
   else if(op==='undo')s=undoHost(s,uid,body.eventId,Date.now());
