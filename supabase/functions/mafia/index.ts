@@ -22,7 +22,7 @@ function auditEntries(old:any,s:any,uid:string|null,op:string,body:any){const ac
  else if(op==='ready')add(body.ready?'player_ready':'player_unready',body.ready?'Игрок подтвердил готовность':'Игрок снял готовность');
  else if(op==='settings')add('settings_changed','Владелец изменил настройки партии',{gameMode:s.settings.gameMode,cameraMode:s.settings.cameraMode,maxPlayers:s.settings.maxPlayers,counts:s.settings.counts});
  else if(op==='start')add('game_started','Партия началась',{players:s.players.filter((p:any)=>!p.moderator).length});
- else if(op==='act')add(body.kind==='vote'?'day_vote':'role_action',body.kind==='vote'?'Игрок отправил дневной голос':'Игрок отправил действие роли: '+(ACTION_LABELS[body.kind]||body.kind),{action:body.kind,targets:namedTargets(old,s,body.targets||[]),epoch:body.epoch});
+  else if(op==='act'){const key=body.kind==='vote'?'day_vote':body.kind==='nominate'?'player_nominated':body.kind==='skip_nomination'?'nomination_skipped':'role_action';const summary=body.kind==='vote'?'Игрок отправил дневной голос':body.kind==='nominate'?'Игрок выдвинул кандидата':body.kind==='skip_nomination'?'Игрок пропустил выдвижение':'Игрок отправил действие роли: '+(ACTION_LABELS[body.kind]||body.kind);add(key,summary,{action:body.kind,targets:namedTargets(old,s,body.targets||[]),epoch:body.epoch});}
  else if(op==='pause')add('game_paused','Владелец поставил игру на паузу');
  else if(op==='resume')add('game_resumed','Владелец продолжил игру');
  else if(op==='control')add('host_control','Владелец выполнил ручную команду: '+String(body.command),{command:body.command,seconds:body.seconds??null});
@@ -74,7 +74,7 @@ async function processRoom(code:string,uid:string|null,op:string,body:any={}){
      const missing=!media.configured||s.players.some((p:any)=>p.alive&&!cameras[p.id]);
      if(missing&&Date.now()>s.cameraGraceUntil&&!s.paused){s.remaining=Math.max(5000,s.deadline-Date.now());s.paused=true;s.pauseReason='Ожидаем подключения камер';s.cameraPaused=true;}
     if(!missing&&s.cameraPaused){s.deadline=Date.now()+s.remaining;s.paused=false;delete s.pauseReason;delete s.cameraPaused;}
-    if(s.settings.gameMode!=='hosted')s=advance(s,Date.now(),secureRandom);
+     if(s.settings.gameMode!=='hosted'||s.phase==='night_pause')s=advance(s,Date.now(),secureRandom);
    }
   }else if(!['state','media'].includes(op))throw Error('Неизвестная команда');
   // Privacy barrier: old media credentials are revoked before a new phase is visible.

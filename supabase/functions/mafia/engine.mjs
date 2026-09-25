@@ -29,9 +29,9 @@ export const ACTIONS = {
  priest:['autopsy'], tracker:['track'], don:['find_sheriff'], godfather:['silence'],
  robber:['block'], informer:['frame'], maniac:['shoot'], ripper:['shoot'], arsonist:['mark','ignite']
 };
-export const ACTION_LABELS={mafia_vote:'Выбрать жертву мафии',bonus_vote:'Дополнительный выстрел',check:'Проверить сторону',heal:'Лечить',shoot:'Выстрелить',pardon:'Защитить от изгнания',alibi:'Дать алиби',compare:'Сравнить стороны',guard:'Защитить собой',alert:'Объявить тревогу',autopsy:'Узнать роль погибшего',track:'Проследить за посетителями',find_sheriff:'Найти шерифа или детектива',silence:'Лишить речи и голоса',block:'Заблокировать способность',frame:'Подставить',mark:'Пометить',ignite:'Поджечь'};
+export const ACTION_LABELS={mafia_vote:'Выбрать жертву мафии',bonus_vote:'Дополнительный выстрел',nominate:'Выдвинуть на голосование',skip_nomination:'Никого не выдвигать',check:'Проверить сторону',heal:'Лечить',shoot:'Выстрелить',pardon:'Защитить от изгнания',alibi:'Дать алиби',compare:'Сравнить стороны',guard:'Защитить собой',alert:'Объявить тревогу',autopsy:'Узнать роль погибшего',track:'Проследить за посетителями',find_sheriff:'Найти шерифа или детектива',silence:'Лишить речи и голоса',block:'Заблокировать способность',frame:'Подставить',mark:'Пометить',ignite:'Поджечь'};
 export const WAKE_ORDER=['robber','veteran','doctor','bodyguard','judge','mistress','informer','godfather','clan','don','maniac','ripper','arsonist','sheriff','detective','journalist','priest','tracker','mason'];
-export const DEFAULTS={daySeconds:180,voteSeconds:45,nightSeconds:30,bonusSeconds:20,resultSeconds:10,soloLastAlive:true,cameraMode:'hidden',gameMode:'auto',counts:{mafia:2,sheriff:1,doctor:1},maxPlayers:24};
+export const DEFAULTS={daySeconds:180,nominationSeconds:30,voteSeconds:45,nightSeconds:30,bonusSeconds:20,resultSeconds:10,soloLastAlive:true,cameraMode:'hidden',gameMode:'auto',counts:{mafia:2,sheriff:1,doctor:1},maxPlayers:24};
 const fail=s=>{throw Error(s);};
 const isModerator=(s,p)=>s.settings.gameMode==='hosted'&&p.id===s.host;
 const contestants=s=>s.players.filter(p=>!isModerator(s,p));
@@ -46,12 +46,12 @@ const inbox=(p,text,round)=>{p.inbox.push({round,text});p.inbox=p.inbox.slice(-1
 const clone=s=>structuredClone(s);
 export function createGame(code,id,name,mediaId,now=Date.now()){
  if(!name?.trim()||name.trim().length>20)fail('Имя: от 1 до 20 символов');
- return {code,mediaId,host:id,phase:'lobby',round:0,epoch:0,deadline:null,paused:false,settings:clone(DEFAULTS),players:[{id,name:name.trim(),seat:1,alive:true,ready:false,role:null,inbox:[],memory:{}}],events:[],eventSeq:0,night:{},votes:{},createdAt:now};
+ return {code,mediaId,host:id,phase:'lobby',round:0,epoch:0,deadline:null,paused:false,settings:clone(DEFAULTS),players:[{id,name:name.trim(),seat:1,alive:true,ready:false,role:null,inbox:[],memory:{}}],events:[],eventSeq:0,night:{},votes:{},nominations:{},nominees:[],createdAt:now};
 }
 export function validateSettings(settings,players=null){
  const out={...DEFAULTS,...settings,counts:{...settings.counts}};
  if(!['auto','hosted'].includes(out.gameMode))fail('Неверный режим игры');
- for(const [key,min,max] of [['daySeconds',30,900],['voteSeconds',15,180],['nightSeconds',15,180],['bonusSeconds',10,60],['resultSeconds',5,30],['maxPlayers',5,24]])if(!Number.isInteger(out[key])||out[key]<min||out[key]>max)fail('Неверная настройка: '+key);
+ for(const [key,min,max] of [['daySeconds',30,900],['nominationSeconds',10,180],['voteSeconds',15,180],['nightSeconds',15,180],['bonusSeconds',10,60],['resultSeconds',5,30],['maxPlayers',5,24]])if(!Number.isInteger(out[key])||out[key]<min||out[key]>max)fail('Неверная настройка: '+key);
  for(const [role,n] of Object.entries(out.counts)){if(!Object.hasOwn(ROLES,role)||!Number.isInteger(n)||n<0||n>(['citizen','mafia','mason'].includes(role)?24:1))fail('Неверное количество роли: '+role);}
  if(players!==null){const sum=Object.values(out.counts).reduce((a,b)=>a+b,0);const nblack=Object.entries(out.counts).filter(([r])=>ROLES[r][1]==='mafia').reduce((n,[,c])=>n+c,0);
   if(players<5||sum>players||nblack<1||nblack>=players/2)fail('Нужно минимум 5 игроков, минимум один мафиози и меньше половины чёрных ролей');
@@ -60,7 +60,10 @@ export function validateSettings(settings,players=null){
  if(!['hidden','open'].includes(out.cameraMode))fail('Неверный режим камер');out.soloLastAlive=out.soloLastAlive!==false;return out;
 }
 export function joinGame(original,id,name){const s=clone(original);if(s.players.some(p=>p.id===id))return renumberSeats(s);if(s.phase!=='lobby')fail('В «Мафию» новые игроки входят до раздачи ролей');if(s.players.length>=s.settings.maxPlayers+(s.settings.gameMode==='hosted'?1:0))fail('Комната заполнена');if(!name?.trim()||name.trim().length>20)fail('Имя: от 1 до 20 символов');s.players.push({id,name:name.trim(),seat:Math.max(0,...s.players.map(p=>p.seat??0))+1,alive:true,ready:false,role:null,inbox:[],memory:{}});if(!s.host)s.host=id;renumberSeats(s);event(s,name.trim()+' присоединился(ась)');return s;}
-function phase(s,next,now){s.phase=next;s.epoch++;s.phaseStarted=now;s.cameraGraceUntil=now+45000;s.deadline=next==='finished'||next==='lobby'?null:now+s.settings[{night:'nightSeconds',night_bonus:'bonusSeconds',day:'daySeconds',voting:'voteSeconds',result:'resultSeconds'}[next]]*1000;}
+function phase(s,next,now){s.phase=next;s.epoch++;s.phaseStarted=now;s.cameraGraceUntil=now+45000;s.deadline=next==='finished'||next==='lobby'?null:now+(next==='night_pause'?3000:s.settings[{night:'nightSeconds',night_bonus:'bonusSeconds',day:'daySeconds',nomination:'nominationSeconds',voting:'voteSeconds',result:'resultSeconds'}[next]]*1000);}
+function startNominations(s,now){s.nominations={};s.nominees=[];s.nominationOrder=alive(s).filter(p=>p.silencedRound!==s.round).map(p=>p.id);s.nominationIndex=0;if(!s.nominationOrder.length){event(s,'Никто не может выступить с выдвижением.');phase(s,'result',now);return;}phase(s,'nomination',now);event(s,'Начались личные выступления и выдвижение кандидатов.');}
+function startVoting(s,now){delete s.nominationOrder;delete s.nominationIndex;s.votes={};if(!(s.nominees||[]).length){event(s,'Никого не выдвинули. Голосование не проводится.');phase(s,'result',now);return;}phase(s,'voting',now);event(s,'Началось голосование по выдвинутым кандидатам: '+s.nominees.map(id=>member(s,id).name).join(', ')+'.');}
+function nextNomination(s,now){s.nominationIndex=(s.nominationIndex||0)+1;while(s.nominationIndex<(s.nominationOrder||[]).length&&!member(s,s.nominationOrder[s.nominationIndex]).alive)s.nominationIndex++;if(s.nominationIndex>=(s.nominationOrder||[]).length)startVoting(s,now);else phase(s,'nomination',now);}
 export function startGame(original,id,cameras,now=Date.now(),random=Math.random){const s=renumberSeats(clone(original));if(s.host!==id||s.phase!=='lobby')fail('Начать может создатель комнаты в лобби');const playing=contestants(s);validateSettings(s.settings,playing.length);if(playing.some(p=>!p.ready)||s.players.some(p=>!cameras[p.id]))fail('Все игроки должны быть готовы, а каждый участник — подключить камеру');
  const deck=Object.entries(s.settings.counts).flatMap(([r,n])=>Array(n).fill(r));while(deck.length<playing.length)deck.push('citizen');
  for(let i=deck.length-1;i>0;i--){const j=Math.floor(random()*(i+1));[deck[i],deck[j]]=[deck[j],deck[i]];}
@@ -79,11 +82,17 @@ export function choicesFor(s,id){const p=member(s,id);if(!p.alive||s.paused)retu
 }
 export function act(original,id,kind,targets=[],now=Date.now()){
  const s=clone(original),p=member(s,id);if(isModerator(s,p)||!p.alive||s.paused||now>=s.deadline)fail('Действие сейчас недоступно');
+ if(kind==='nominate'||kind==='skip_nomination'){
+  if(s.phase!=='nomination'||s.nominationOrder?.[s.nominationIndex]!==id||Object.hasOwn(s.nominations||{},id))fail('Сейчас не ваше время для выдвижения');
+  if(kind==='skip_nomination'){if(targets.length)fail('Для пропуска цель не нужна');s.nominations[id]=null;event(s,p.name+' никого не выдвинул(а).');}
+  else{if(targets.length!==1)fail('Выберите одного кандидата');const t=member(s,targets[0]);if(!t.alive||t.id===id||t.alibiRound===s.round||(s.nominees||[]).includes(t.id))fail('Этого игрока нельзя выдвинуть');s.nominations[id]=t.id;s.nominees.push(t.id);event(s,p.name+' выдвинул(а) '+t.name+' на голосование.');}
+  delete s.undo;nextNomination(s,now);return s;
+ }
  if(kind==='vote'){
   if(s.phase!=='voting'||p.silencedRound===s.round)fail('Голосование недоступно');
   if(Object.hasOwn(s.votes,id))fail('Голос уже принят');
   if(targets.length>1)fail('Нужна одна цель или воздержание');
-  if(targets.length){const t=member(s,targets[0]);if(!t.alive||t.id===id||t.alibiRound===s.round)fail('Недопустимая цель');}
+  if(targets.length){const t=member(s,targets[0]);if(!t.alive||t.id===id||t.alibiRound===s.round||((s.nominees||[]).length&&!(s.nominees||[]).includes(t.id)))fail('Недопустимая цель');}
   s.votes[id]=targets[0]||null;delete s.undo;return s;
  }
  if(!choicesFor(s,id).includes(kind))fail('Эта способность вам недоступна');
@@ -162,7 +171,8 @@ function autoFillWake(s,random){
 }
 export function advance(original,now=Date.now(),random=Math.random){let s=clone(original);if(s.paused||!s.deadline||now<s.deadline)return s;
  delete s.undo;
- if(s.phase==='night'){s=autoFillWake(s,random);if(s.wakeOrder&&s.wakeIndex<s.wakeOrder.length-1){s.wakeIndex++;phase(s,'night',now);return s;}s.pending=resolveNight(s,random);recordNight(s);phase(s,'night_bonus',now);return s;}
+ if(s.phase==='night'){s=autoFillWake(s,random);if(s.wakeOrder&&s.wakeIndex<s.wakeOrder.length-1){s.pendingWakeIndex=s.wakeIndex+1;phase(s,'night_pause',now);return s;}s.pendingNightResolve=true;phase(s,'night_pause',now);return s;}
+ if(s.phase==='night_pause'){if(s.pendingNightResolve){delete s.pendingNightResolve;s.pending=resolveNight(s,random);recordNight(s);phase(s,'night_bonus',now);}else{s.wakeIndex=s.pendingWakeIndex;delete s.pendingWakeIndex;phase(s,'night',now);}return s;}
  if(s.phase==='night_bonus'){
   s=autoFillWake(s,random);
   const result=s.pending;
@@ -178,7 +188,8 @@ export function advance(original,now=Date.now(),random=Math.random){let s=clone(
   for(const p of alive(s)){if(p.alibiRound===s.round)event(s,p.name+': на сегодня есть алиби.');if(p.silencedRound===s.round)event(s,p.name+': сегодня не участвует в обсуждении и голосовании.');}
   delete s.pending;if(!checkWin(s,now)){phase(s,'day',now);s.votes={};}return s;
  }
- if(s.phase==='day'){phase(s,'voting',now);s.votes={};event(s,'Началось дневное голосование.');return s;}
+ if(s.phase==='day'){startNominations(s,now);return s;}
+ if(s.phase==='nomination'){const id=s.nominationOrder?.[s.nominationIndex],p=id?s.players.find(p=>p.id===id):null;if(p&&!Object.hasOwn(s.nominations||{},id)){s.nominations[id]=null;event(s,p.name+' не успел(а) выдвинуть кандидата и пропускает выступление.');}nextNomination(s,now);return s;}
  if(s.phase==='voting'){
   const counts={};for(const [id,target] of Object.entries(s.votes)){const p=member(s,id),t=target?s.players.find(x=>x.id===target):null;if(p.alive&&p.silencedRound!==s.round&&t?.alive&&t.alibiRound!==s.round)counts[target]=(counts[target]||0)+1;}
   const ranked=Object.entries(counts).sort((a,b)=>b[1]-a[1]);s.lastTally=Object.entries(counts).map(([id,count])=>({id,count}));
@@ -201,18 +212,20 @@ export function control(original,id,command,expectedEpoch,seconds,now=Date.now()
  if(expectedEpoch!==original.epoch)fail('Фаза уже изменилась. Повторите действие.');
  let s=clone(original);const paused=s.paused;const before={deadline:s.deadline,paused:s.paused,remaining:s.remaining,pauseReason:s.pauseReason};s.paused=false;delete s.cameraPaused;
  if(command==='timer'){if(!Number.isInteger(seconds)||seconds<5||seconds>900)fail('Время: от 5 до 900 секунд');s.deadline=now+seconds*1000;}
- else{
-  if(!['next','dawn','voting','next_round'].includes(command))fail('Неизвестное управление');
-  if(command==='dawn'&&!['night','night_bonus'].includes(s.phase))fail('Сейчас не ночь');
-  if(command==='voting'&&s.phase!=='day')fail('Голосование запускается из обсуждения');
-  const round=s.round;let steps=0;
-  do{s.deadline=now;s=advance(s,now,random);steps++;if(s.phase==='finished')break;}
-  while(steps<WAKE_ORDER.length+6&&((command==='dawn'&&['night','night_bonus'].includes(s.phase))||(command==='next_round'&&s.round===round)));
+  else{
+   if(!['next','dawn','nomination','voting','next_round'].includes(command))fail('Неизвестное управление');
+   if(command==='dawn'&&!['night','night_pause','night_bonus'].includes(s.phase))fail('Сейчас не ночь');
+   if(command==='nomination'&&s.phase!=='day')fail('Выдвижение запускается после обсуждения');
+   if(command==='voting'&&!['day','nomination'].includes(s.phase))fail('Голосование запускается после обсуждения или выдвижения');
+   const round=s.round;let steps=0;
+   if(command==='voting'&&s.phase==='day'){s.nominees=alive(s).filter(p=>p.alibiRound!==s.round).map(p=>p.id);phase(s,'voting',now);s.votes={};event(s,'Ведущий запустил(а) аварийное голосование по всем живым игрокам.');}
+   else do{s.deadline=now;s=advance(s,now,random);steps++;if(s.phase==='finished')break;}
+   while(steps<WAKE_ORDER.length*2+30&&((command==='dawn'&&['night','night_pause','night_bonus'].includes(s.phase))||(command==='voting'&&s.phase==='nomination')||(command==='next_round'&&s.round===round)));
  }
  const leader=s.settings.gameMode==='hosted'?'Ведущий':'Создатель';
  if(paused&&s.phase!=='finished'){s.paused=true;s.remaining=Math.max(0,s.deadline-now);s.pauseReason=leader+' поставил партию на паузу';}
  else{delete s.pauseReason;s.paused=false;}
- const labels={next:'перешёл к следующему этапу',dawn:'завершил ночь',voting:'запустил голосование',next_round:'перешёл к следующему раунду',timer:'установил таймер: '+seconds+' сек.'};
+  const labels={next:'перешёл к следующему этапу',dawn:'завершил ночь',nomination:'запустил личные выступления',voting:'запустил голосование',next_round:'перешёл к следующему раунду',timer:'установил таймер: '+seconds+' сек.'};
  event(s,leader+' '+labels[command]+'.');
  if(command==='timer')s.undo={eventId:s.eventSeq,kind:'timer',round:s.round,phase:s.phase,before};else delete s.undo;
  return s;
@@ -224,60 +237,67 @@ export function changeLobby(original,id,command,data={},camera=false){const s=cl
  return renumberSeats(s);
 }
 export function pause(original,id,paused,now=Date.now()){const s=clone(original);if(s.host!==id||['lobby','finished'].includes(s.phase))fail('Пауза недоступна');const leader=s.settings.gameMode==='hosted'?'Ведущий':'Создатель';delete s.cameraPaused;if(s.paused===paused){if(paused)s.pauseReason=leader+' поставил партию на паузу';return s;}if(paused){s.remaining=Math.max(0,s.deadline-now);s.paused=true;s.pauseReason=leader+' поставил партию на паузу';}else{s.deadline=now+s.remaining;s.paused=false;delete s.pauseReason;}return s;}
-export function liveSettings(original,id,seconds){const s=clone(original);if(s.settings.gameMode!=='hosted'||s.host!==id||['lobby','finished'].includes(s.phase))fail('Настройки доступны ведущему во время партии');
- const before={};for(const key of ['daySeconds','voteSeconds','nightSeconds','bonusSeconds']){const value=seconds?.[key],bounds={daySeconds:[30,900],voteSeconds:[15,180],nightSeconds:[15,180],bonusSeconds:[10,60]}[key];if(!Number.isInteger(value)||value<bounds[0]||value>bounds[1])fail('Неверная длительность: '+key);before[key]=s.settings[key];s.settings[key]=value;}
- event(s,'Ведущий обновил(а) длительности следующих этапов.');s.undo={eventId:s.eventSeq,kind:'settings',round:s.round,phase:s.phase,before};return s;
+export function liveSettings(original,id,seconds){const s=clone(original);if(s.host!==id||['lobby','finished'].includes(s.phase))fail('Настройки доступны владельцу во время партии');
+ const before={};for(const key of ['daySeconds','nominationSeconds','voteSeconds','nightSeconds','bonusSeconds']){const value=seconds?.[key]??s.settings[key],bounds={daySeconds:[30,900],nominationSeconds:[10,180],voteSeconds:[15,180],nightSeconds:[15,180],bonusSeconds:[10,60]}[key];if(!Number.isInteger(value)||value<bounds[0]||value>bounds[1])fail('Неверная длительность: '+key);before[key]=s.settings[key];s.settings[key]=value;}
+ event(s,(s.settings.gameMode==='hosted'?'Ведущий':'Владелец')+' обновил(а) длительности следующих этапов.');s.undo={eventId:s.eventSeq,kind:'settings',round:s.round,phase:s.phase,before};return s;
 }
-export function announce(original,id,text,target=null){const s=clone(original);if(s.settings.gameMode!=='hosted'||s.host!==id||['lobby','finished'].includes(s.phase))fail('Объявление доступно ведущему во время партии');if(typeof text!=='string'||!text.trim()||text.length>300)fail('Объявление: от 1 до 300 символов');if(target){const p=member(s,target);if(isModerator(s,p))fail('Выберите игрока');}
- event(s,'Ведущий: '+text.trim(),target?[id,target]:null);delete s.undo;return s;
+export function announce(original,id,text,target=null){const s=clone(original);if(s.host!==id||['lobby','finished'].includes(s.phase))fail('Объявление доступно владельцу во время партии');if(typeof text!=='string'||!text.trim()||text.length>300)fail('Объявление: от 1 до 300 символов');if(target){if(s.settings.gameMode!=='hosted')fail('Личное объявление доступно только отдельному ведущему');const p=member(s,target);if(isModerator(s,p))fail('Выберите игрока');}
+ event(s,(s.settings.gameMode==='hosted'?'Ведущий':'Владелец')+': '+text.trim(),target?[id,target]:null);delete s.undo;return s;
 }
 export function moderate(original,id,command,target,role,now=Date.now()){
- const s=clone(original);if(s.settings.gameMode!=='hosted'||s.host!==id||['lobby','finished'].includes(s.phase))fail('Команда доступна ведущему во время партии');
+ const s=clone(original);if(s.host!==id||s.phase==='lobby'||(s.phase==='finished'&&command!=='revive'))fail('Команда доступна владельцу во время партии');
  const p=member(s,target);if(isModerator(s,p))fail('Нельзя применить команду к ведущему');
- const before={player:{role:p.role,alive:p.alive,deathCause:p.deathCause,deathRound:p.deathRound,memory:clone(p.memory),inbox:clone(p.inbox),hostMuted:p.hostMuted},night:clone(s.night),votes:clone(s.votes),wakeOrder:clone(s.wakeOrder),wakeIndex:s.wakeIndex};
+ const before={player:{role:p.role,alive:p.alive,deathCause:p.deathCause,deathRound:p.deathRound,memory:clone(p.memory),inbox:clone(p.inbox),hostMuted:p.hostMuted},night:clone(s.night),votes:clone(s.votes),nominations:clone(s.nominations||{}),nominees:clone(s.nominees||[]),wakeOrder:clone(s.wakeOrder),wakeIndex:s.wakeIndex,state:{phase:s.phase,deadline:s.deadline,winner:clone(s.winner),round:s.round}};
  if(command==='eliminate'){if(!p.alive)fail('Игрок уже выбыл');p.alive=false;p.deathCause='host';p.deathRound=s.round;event(s,'Ведущий исключил(а) '+p.name+'.');}
- else if(command==='revive'){if(p.alive)fail('Игрок уже в игре');p.alive=true;delete p.deathCause;delete p.deathRound;event(s,'Ведущий вернул(а) '+p.name+' в игру.');}
- else if(command==='role'){if(!Object.hasOwn(ROLES,role))fail('Неизвестная роль');const current=s.wakeOrder?.[s.wakeIndex],index=s.wakeIndex||0;p.role=role;p.memory={};p.inbox=[];s.wakeOrder=wakePlan(s);s.wakeIndex=Math.max(0,s.wakeOrder.indexOf(current));if(!s.wakeOrder.includes(current))s.wakeIndex=Math.min(index,Math.max(0,s.wakeOrder.length-1));event(s,'Ведущий исправил роль игрока '+p.name+'.',[s.host]);}
+ else if(command==='revive'){if(p.alive)fail('Игрок уже в игре');const finished=s.phase==='finished';p.alive=true;delete p.deathCause;delete p.deathRound;if(finished){delete s.winner;phase(s,'result',now);}event(s,(s.settings.gameMode==='hosted'?'Ведущий':'Владелец')+' вернул(а) '+p.name+' в игру.'+(finished?' Партия восстановлена после финального экрана.':''));}
+ else if(command==='role'){if(s.settings.gameMode!=='hosted')fail('Роли можно исправлять только в режиме с отдельным ведущим');if(!Object.hasOwn(ROLES,role))fail('Неизвестная роль');const current=s.wakeOrder?.[s.wakeIndex],index=s.wakeIndex||0;p.role=role;p.memory={};p.inbox=[];s.wakeOrder=wakePlan(s);s.wakeIndex=Math.max(0,s.wakeOrder.indexOf(current));if(!s.wakeOrder.includes(current))s.wakeIndex=Math.min(index,Math.max(0,s.wakeOrder.length-1));event(s,'Ведущий исправил роль игрока '+p.name+'.',[s.host]);}
  else if(command==='mute'||command==='unmute'){if(!!p.hostMuted===(command==='mute'))fail('Статус микрофона уже установлен');p.hostMuted=command==='mute';event(s,'Ведущий '+(p.hostMuted?'запретил(а)':'разрешил(а)')+' голос игроку '+p.name+'.');}
  else if(command==='clear_action'){if(!s.night.actions?.[target]&&!s.night.mafiaVotes?.[target]&&!s.night.bonusVotes?.[target])fail('У игрока нет текущего ночного выбора');delete s.night.actions[target];delete s.night.mafiaVotes[target];delete s.night.bonusVotes[target];event(s,'Ведущий сбросил(а) ночной выбор игрока '+p.name+'.',[s.host,target]);}
  else if(command==='clear_vote'){if(s.phase!=='voting'||!Object.hasOwn(s.votes,target))fail('У игрока нет голоса в текущем голосовании');delete s.votes[target];event(s,'Ведущий сбросил(а) дневной голос игрока '+p.name+'.',[s.host,target]);}
+ else if(command==='clear_nomination'){if(!Object.hasOwn(s.nominations||{},target))fail('У игрока нет выдвижения в текущем раунде');delete s.nominations[target];s.nominees=[...new Set(Object.values(s.nominations).filter(Boolean))];event(s,(s.settings.gameMode==='hosted'?'Ведущий':'Владелец')+' отменил(а) выдвижение игрока '+p.name+'.');}
  else fail('Неизвестная команда ведущего');
  s.epoch++;s.cameraGraceUntil=now+20000;
- if(['eliminate','role'].includes(command)&&checkWin(s,now)){delete s.undo;return s;}
  s.undo={eventId:s.eventSeq,kind:'moderate',command,target,round:s.round,phase:s.phase,before};
+ if(['eliminate','role'].includes(command)&&checkWin(s,now)){
+  // checkWin records a separate victory event. Bind undo to that newest event so
+  // an accidental elimination that ends the match can still be reversed.
+  s.undo.eventId=s.eventSeq;s.undo.phase=s.phase;return s;
+ }
  return s;
 }
 export function undoHost(original,id,eventId,now=Date.now()){
  const s=clone(original),u=s.undo;
- if(s.settings.gameMode!=='hosted'&&u?.kind==='moderate')fail('Команда доступна только ведущему');
- if(s.host!==id||!u||s.phase==='finished'||u.eventId!==eventId||s.eventSeq!==eventId||s.round!==u.round||s.phase!==u.phase)fail('Это действие уже нельзя отменить: состояние партии изменилось');
+ if(s.host!==id||!u||u.eventId!==eventId||s.eventSeq!==eventId||s.round!==u.round||s.phase!==u.phase)fail('Это действие уже нельзя отменить: состояние партии изменилось');
  if(u.kind==='timer'){s.deadline=u.before.deadline;s.paused=u.before.paused;s.remaining=u.before.remaining;s.pauseReason=u.before.pauseReason;}
  else if(u.kind==='settings'){Object.assign(s.settings,u.before);}
  else if(u.kind==='moderate'){
   const p=member(s,u.target);for(const key of ['role','alive','deathCause','deathRound','memory','inbox','hostMuted']){if(u.before.player[key]===undefined)delete p[key];else p[key]=clone(u.before.player[key]);}
-  s.night=u.before.night;s.votes=u.before.votes;s.wakeOrder=u.before.wakeOrder;s.wakeIndex=u.before.wakeIndex;
+   s.night=u.before.night;s.votes=u.before.votes;s.nominations=u.before.nominations;s.nominees=u.before.nominees;s.wakeOrder=u.before.wakeOrder;s.wakeIndex=u.before.wakeIndex;
+   if(u.before.state){s.phase=u.before.state.phase;s.deadline=u.before.state.deadline;s.round=u.before.state.round;if(u.before.state.winner===undefined)delete s.winner;else s.winner=clone(u.before.state.winner);}
  }else fail('Неизвестное действие отмены');
  delete s.undo;s.epoch++;s.cameraGraceUntil=now+20000;event(s,'Ведущий обратил(а) вспять действие №'+eventId+'.');return s;
 }
 export function mediaPolicy(s,id){const p=member(s,id);let group='table',audio=true,subscribe=true;
  if(!p.alive&&s.phase!=='finished'){group='observer-'+p.id;audio=false;subscribe=false;}
- else if(s.settings.gameMode==='hosted'&&(s.phase==='night'||s.phase==='night_bonus')){group='hosted-night';if(isModerator(s,p)){audio=true;subscribe=true;}else{audio=choicesFor(s,id).length>0;subscribe=false;}}
- else if(s.phase==='night'||s.phase==='night_bonus'){const clanWindow=!s.wakeOrder||s.phase==='night_bonus'||s.wakeOrder[s.wakeIndex]==='clan';const together=nightGroup(p)&&clanWindow;group=together?'night-team':'private-'+p.id;audio=together;subscribe=together;}
+ else if(s.settings.gameMode==='hosted'&&['night','night_pause','night_bonus'].includes(s.phase)){const acting=choicesFor(s,id).length>0;if(isModerator(s,p)||acting){group='hosted-night';audio=true;subscribe=true;}else{group='private-'+p.id;audio=false;subscribe=false;}}
+ else if(['night','night_pause','night_bonus'].includes(s.phase)){const clanWindow=!s.wakeOrder||s.phase==='night_bonus'||s.wakeOrder[s.wakeIndex]==='clan',together=s.phase!=='night_pause'&&nightGroup(p)&&clanWindow;group=together?'night-team':'private-'+p.id;audio=together;subscribe=together;}
  else if(p.silencedRound===s.round&&s.phase!=='finished')audio=false;
  if(p.hostMuted&&s.phase!=='finished')audio=false;
- const videoRoom=s.settings.cameraMode==='open'?s.mediaId+'-cameras-'+(s.cameraGeneration||0):null;return {room:s.mediaId+'-'+s.epoch+'-'+group,identity:id,camera:!videoRoom,videoRoom,audio,subscribe,epoch:s.epoch};
+ const dayTable=['day','nomination','voting','result'].includes(s.phase),mediaEpoch=dayTable?'day-'+s.round:s.epoch;
+ const videoRoom=s.settings.cameraMode==='open'?s.mediaId+'-cameras-'+(s.cameraGeneration||0):null;return {room:s.mediaId+'-'+mediaEpoch+'-'+group,identity:id,camera:!videoRoom,videoRoom,audio,subscribe,epoch:mediaEpoch};
 }
-export function publicView(s,id){const p=member(s,id),night=s.phase==='night'||s.phase==='night_bonus';
- const moderator=isModerator(s,p),policy=mediaPolicy(s,id),peers=p.alive&&night&&policy.subscribe?(moderator?alive(s).map(t=>t.id):s.players.filter(t=>t.alive&&nightGroup(t)).map(t=>t.id)):[];
- const available=choicesFor(s,id),waking=s.phase==='night_bonus'?'bonus':s.wakeOrder?.[s.wakeIndex];
+export function publicView(s,id){const p=member(s,id),night=['night','night_pause','night_bonus'].includes(s.phase);
+ const moderator=isModerator(s,p),policy=mediaPolicy(s,id),peers=p.alive&&night&&policy.subscribe?s.players.filter(t=>(t.alive||isModerator(s,t))&&mediaPolicy(s,t.id).room===policy.room).map(t=>t.id):[];
+ const available=choicesFor(s,id),waking=s.phase==='night_pause'?'pause':s.phase==='night_bonus'?'bonus':s.wakeOrder?.[s.wakeIndex],nominationId=s.phase==='nomination'?s.nominationOrder?.[s.nominationIndex]:null;
  const eligible=Object.fromEntries(available.map(kind=>[kind,eligibleFor(s,p,kind)]));
  // Explicit allowlist: never serialize raw players, night state, visits, or pending results.
  return {code:s.code,host:s.host,phase:night?'night':s.phase,round:s.round,deadline:night&&!s.wakeOrder?(s.phase==='night'?s.deadline+s.settings.bonusSeconds*1000:s.deadline):s.deadline,paused:s.paused,pauseReason:s.pauseReason||null,epoch:s.epoch,settings:s.settings,winner:s.winner||null,
-  wake:night&&s.wakeOrder?{key:waking,label:waking==='bonus'?'Завершение ночи':waking==='clan'?'Мафия':ROLES[waking]?.[0],index:s.phase==='night_bonus'?s.wakeOrder.length:s.wakeIndex,total:s.wakeOrder.length+1,mine:available.length>0,deadline:s.deadline,order:[...s.wakeOrder,'bonus'].map(k=>({key:k,label:k==='clan'?'Мафия':k==='bonus'?'Завершение ночи':ROLES[k][0]}))}:null,
+   wake:night&&s.wakeOrder?{key:waking,label:waking==='pause'?'Тихая пауза':waking==='bonus'?'Завершение ночи':waking==='clan'?'Мафия':ROLES[waking]?.[0],index:s.phase==='night_bonus'?s.wakeOrder.length:s.wakeIndex,total:s.wakeOrder.length+1,mine:available.length>0,deadline:s.deadline,order:[...s.wakeOrder,'bonus'].map(k=>({key:k,label:k==='clan'?'Мафия':k==='bonus'?'Завершение ночи':ROLES[k][0]}))}:null,
   players:s.players.map(t=>({id:t.id,name:t.name,seat:t.seat,alive:t.alive,ready:t.ready,moderator:isModerator(s,t),alibi:!night&&t.alibiRound===s.round,silenced:!night&&t.silencedRound===s.round,hostMuted:!!t.hostMuted,sound:(!night||moderator||t.id===id||peers.includes(t.id))&&t.soundState&&Date.now()-t.soundState.at<45000?t.soundState.enabled:null,...(s.phase==='finished'||moderator?{role:t.role}:{})})),
-  me:{id,role:p.role,inbox:p.inbox,alive:p.alive,moderator,actions:choicesFor(s,id),submitted:night?(s.night.actions?.[id]||null):null,mafiaVote:night&&nightGroup(p)?s.night.mafiaVotes?.[id]||null:null,bonusVote:s.phase==='night_bonus'&&nightGroup(p)?s.night.bonusVotes?.[id]||null:null,voted:Object.hasOwn(s.votes,id),marked:p.role==='arsonist'?p.memory.marked||[]:[],nightPeers:peers},
+  me:{id,role:p.role,inbox:p.inbox,alive:p.alive,moderator,actions:choicesFor(s,id),submitted:night?(s.night.actions?.[id]||null):null,mafiaVote:night&&nightGroup(p)?s.night.mafiaVotes?.[id]||null:null,bonusVote:s.phase==='night_bonus'&&nightGroup(p)?s.night.bonusVotes?.[id]||null:null,voted:Object.hasOwn(s.votes,id),nominated:Object.hasOwn(s.nominations||{},id),marked:p.role==='arsonist'?p.memory.marked||[]:[],nightPeers:peers},
+  nomination:s.phase==='nomination'||s.phase==='voting'?{currentId:nominationId||null,index:s.nominationIndex||0,total:s.nominationOrder?.length||0,nominees:[...(s.nominees||[])],eligible:nominationId===id?s.players.filter(t=>t.alive&&!isModerator(s,t)&&t.id!==id&&t.alibiRound!==s.round&&!(s.nominees||[]).includes(t.id)).map(t=>t.id):[]}:null,
   eligibleTargets:eligible,
   events:s.events.filter(e=>moderator||e.audience==null||e.audience.includes(id)).map(e=>({id:e.id,round:e.round,text:e.text,private:e.audience!=null})),
-  hostPanel:moderator?{undo:s.undo?{eventId:s.undo.eventId,kind:s.undo.kind}:null,players:contestants(s).map(t=>{const action=s.night.actions?.[t.id];return {id:t.id,role:t.role,alive:t.alive,hostMuted:!!t.hostMuted,action:action?{kind:action.kind,targets:action.targets}:null,mafiaVote:s.night.mafiaVotes?.[t.id]||null,bonusVote:s.night.bonusVotes?.[t.id]||null,vote:Object.hasOwn(s.votes,t.id)?s.votes[t.id]:undefined};})}:null,
+   hostPanel:s.host===id?{fullAccess:moderator,undo:s.undo?{eventId:s.undo.eventId,kind:s.undo.kind}:null,players:contestants(s).map(t=>{const action=s.night.actions?.[t.id],full=moderator||s.phase==='finished';return {id:t.id,...(full?{role:t.role}:{}),alive:t.alive,hostMuted:!!t.hostMuted,hasAction:!!(action||s.night.mafiaVotes?.[t.id]||s.night.bonusVotes?.[t.id]),hasVote:Object.hasOwn(s.votes,t.id),nomination:Object.hasOwn(s.nominations||{},t.id)?s.nominations[t.id]:undefined,...(full?{action:action?{kind:action.kind,targets:action.targets}:null,mafiaVote:s.night.mafiaVotes?.[t.id]||null,bonusVote:s.night.bonusVotes?.[t.id]||null,vote:Object.hasOwn(s.votes,t.id)?s.votes[t.id]:undefined}:{})};})}:null,
   lastTally:s.phase==='result'||s.phase==='finished'?s.lastTally||[]:[],media:policy};
 }
