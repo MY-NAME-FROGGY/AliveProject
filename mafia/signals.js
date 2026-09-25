@@ -1,6 +1,7 @@
 (function(w){
  'use strict';
- const files={turn:'01-your-turn.mp3',wake:'02-wake-up.mp3',warning:'03-ten-seconds.mp3',sleep:'04-sleep.mp3',dawn:'02-wake-up.mp3'};
+ const recorded=w.MafiaSoundRecordings||{};
+ const files={turn:recorded.turn||'01-your-turn.mp3',wake:recorded.wake||'02-wake-up.mp3',warning:recorded.warning||'03-ten-seconds.mp3',sleep:recorded.sleep||'04-sleep.mp3',dawn:recorded.wake||'02-wake-up.mp3'};
  const labels={turn:'Твой ход',wake:'Просыпаемся — три раза',warning:'Осталось десять секунд',sleep:'Засыпаем',dawn:'Город просыпается'};
  const stored=Number(localStorage.getItem('mafiaSignalVolume')??40);
  let volume=Number.isFinite(stored)?Math.max(0,Math.min(100,stored)):40,enabled=localStorage.getItem('mafiaSignals')==='on';
@@ -12,7 +13,7 @@
   if(!files[kind]||(!test&&!enabled))return;
   stop();const ticket=generation;
   if(!volume){status('Громкость сигналов — 0%. Передвиньте ползунок для проверки.');return;}
-  let sound=pool.get(kind);if(!sound){sound=new Audio('sounds/'+files[kind]);sound.preload='auto';pool.set(kind,sound);}
+  let sound=pool.get(kind);if(!sound){const source=files[kind].startsWith('data:')?files[kind]:'sounds/'+files[kind];sound=new Audio(source);sound.preload='auto';pool.set(kind,sound);}
   current=sound;sound.volume=volume/100;sound.currentTime=0;
   try{await sound.play();if(ticket!==generation){if(current!==sound)sound.pause();return;}let remaining=Math.max(0,repeat-1);sound.onended=()=>{if(ticket!==generation)return;if(remaining){sound.currentTime=0;remaining--;sound.play().catch(()=>{});return;}sound.onended=null;if(after)after();};status(test?'Проверка: '+labels[kind]+' · '+volume+'%':'Сигналы включены · '+volume+'%');}
   catch(e){if(ticket===generation)status(e.name==='NotAllowedError'?'Нажмите «Проверить звук», чтобы разрешить сигналы.':'Не удалось воспроизвести сигнал. Проверьте подключение и повторите.');}
