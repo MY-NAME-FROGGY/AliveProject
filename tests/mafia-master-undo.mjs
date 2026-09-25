@@ -8,7 +8,7 @@ for(const p of s.players.filter(p=>p.id!=='host'))s=changeLobby(s,p.id,'ready',{
 s=startGame(s,'host',Object.fromEntries(s.players.map(p=>[p.id,true])),1,()=>.7);
 const citizen=s.players.find(p=>p.role==='citizen'),doctor=s.players.find(p=>p.role==='doctor');
 
-assert.throws(()=>moderate(s,citizen.id,'mute',doctor.id),/ведущему/);
+assert.throws(()=>moderate(s,citizen.id,'mute',doctor.id),/владельцу|ведущему/);
 s=moderate(s,'host','mute',citizen.id,null,2);
 assert.equal(mediaPolicy(s,citizen.id).audio,false);
 assert.equal(publicView(s,citizen.id).hostPanel,null);
@@ -37,7 +37,7 @@ undoId=s.undo.eventId;
 assert.equal(s.settings.daySeconds,240);
 s=undoHost(s,'host',undoId,8);
 assert.equal(s.settings.daySeconds,DEFAULTS.daySeconds);
-assert.throws(()=>liveSettings(s,citizen.id,{daySeconds:240,voteSeconds:60,nightSeconds:40,bonusSeconds:25}),/ведущему/);
+assert.throws(()=>liveSettings(s,citizen.id,{daySeconds:240,voteSeconds:60,nightSeconds:40,bonusSeconds:25}),/владельцу|ведущему/);
 
 s=announce(s,'host','Личное сообщение',citizen.id);
 assert.equal(publicView(s,citizen.id).events.at(-1).text,'Ведущий: Личное сообщение');
