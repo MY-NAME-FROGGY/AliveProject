@@ -1,20 +1,20 @@
 (function(w){
  'use strict';
- const files={turn:'01-your-turn.wav',warning:'02-five-seconds.wav',night:'03-city-sleeps.wav',dawn:'04-dawn.wav'};
- const labels={turn:'Ваш ход',warning:'Осталось пять секунд',night:'Город засыпает',dawn:'Рассвет'};
+ const files={turn:'01-your-turn.mp3',wake:'02-wake-up.mp3',warning:'03-ten-seconds.mp3',sleep:'04-sleep.mp3',dawn:'02-wake-up.mp3'};
+ const labels={turn:'Твой ход',wake:'Просыпаемся — три раза',warning:'Осталось десять секунд',sleep:'Засыпаем',dawn:'Город просыпается'};
  const stored=Number(localStorage.getItem('mafiaSignalVolume')??40);
  let volume=Number.isFinite(stored)?Math.max(0,Math.min(100,stored)):40,enabled=localStorage.getItem('mafiaSignals')==='on';
  let current=null,lastPhase=null,lastWake=null,lastWarning=null,lastMine=false,generation=0,delayed=null;
  const pool=new Map();
  function status(text){const el=document.getElementById('signalStatus');if(el)el.textContent=text;}
- function stop(){generation++;if(delayed){clearTimeout(delayed);delayed=null;}if(current){current.pause();current.currentTime=0;current=null;}}
- async function play(kind,test=false){
+ function stop(){generation++;if(delayed){clearTimeout(delayed);delayed=null;}if(current){current.onended=null;current.pause();current.currentTime=0;current=null;}}
+ async function play(kind,test=false,repeat=1,after=null){
   if(!files[kind]||(!test&&!enabled))return;
   stop();const ticket=generation;
   if(!volume){status('Громкость сигналов — 0%. Передвиньте ползунок для проверки.');return;}
   let sound=pool.get(kind);if(!sound){sound=new Audio('sounds/'+files[kind]);sound.preload='auto';pool.set(kind,sound);}
   current=sound;sound.volume=volume/100;sound.currentTime=0;
-  try{await sound.play();if(ticket!==generation){if(current!==sound)sound.pause();return;}status(test?'Проверка: '+labels[kind]+' · '+volume+'%':'Сигналы включены · '+volume+'%');}
+  try{await sound.play();if(ticket!==generation){if(current!==sound)sound.pause();return;}let remaining=Math.max(0,repeat-1);sound.onended=()=>{if(ticket!==generation)return;if(remaining){sound.currentTime=0;remaining--;sound.play().catch(()=>{});return;}sound.onended=null;if(after)after();};status(test?'Проверка: '+labels[kind]+' · '+volume+'%':'Сигналы включены · '+volume+'%');}
   catch(e){if(ticket===generation)status(e.name==='NotAllowedError'?'Нажмите «Проверить звук», чтобы разрешить сигналы.':'Не удалось воспроизвести сигнал. Проверьте подключение и повторите.');}
  }
  function sync(){const toggle=document.getElementById('signalsEnabled');if(toggle)toggle.checked=enabled;const output=document.getElementById('signalVolumeValue');if(output)output.textContent=volume+'%';}
@@ -28,13 +28,14 @@
   const phase=[game.code,game.round,game.phase].join(':'),wake=phase+':'+game.epoch;
   let enteredNight=false;if(phase!==lastPhase){const hadPhase=lastPhase!==null;lastPhase=phase;lastWake=null;lastWarning=null;lastMine=false;
    const panel=document.getElementById('soundSettings');if(game.phase!=='lobby'&&panel?.firstElementChild)panel.firstElementChild.open=false;
-   if(game.phase==='night'&&(game.wake?.index===0||!game.wake)){enteredNight=true;play('night');}
+  if(game.phase==='night'&&(game.wake?.index===0||!game.wake)){enteredNight=true;play('sleep');}
    else if(hadPhase&&(game.phase==='day'||game.phase==='finished'))play('dawn');
    else if(hadPhase&&game.phase==='voting')play('turn');
   }
-  if(wake!==lastWake){lastWake=wake;if(game.phase==='night'){if(game.wake?.mine){if(enteredNight){const expected=wake;delayed=setTimeout(()=>{delayed=null;if(lastWake===expected&&lastMine)play('turn');},1800);}else play('turn');}else if(game.me?.alive!==false&&!game.me?.moderator&&!enteredNight)play('night');}lastMine=!!game.wake?.mine;}
+  if(wake!==lastWake){lastWake=wake;if(game.phase==='night'&&game.wake?.key!=='pause'){if(game.wake?.mine){const wakeThenTurn=()=>play('wake',false,3,()=>play('turn'));if(enteredNight){const expected=wake;delayed=setTimeout(()=>{delayed=null;if(lastWake===expected&&lastMine)wakeThenTurn();},1800);}else wakeThenTurn();}else if(game.me?.alive!==false&&!game.me?.moderator&&!enteredNight)play('sleep');}else if(game.phase==='nomination'&&game.nomination?.currentId===game.me?.id)play('turn');lastMine=!!game.wake?.mine;}
   const deadline=game.wake?.deadline||game.deadline,remaining=deadline-now,warning=wake+':'+deadline;
-  if(game.phase==='night'&&game.wake?.mine&&remaining>0&&remaining<=5000&&warning!==lastWarning){lastWarning=warning;play('warning');}
+  const personal=game.phase==='night'&&game.wake?.mine||game.phase==='nomination'&&game.nomination?.currentId===game.me?.id;
+  if(personal&&remaining>0&&remaining<=10000&&warning!==lastWarning){lastWarning=warning;play('warning');}
  }
  w.MafiaSignals={mount,enable,volume:setVolume,test,observe,stop};
 })(window);
