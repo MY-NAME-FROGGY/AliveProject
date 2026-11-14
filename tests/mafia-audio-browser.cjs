@@ -25,7 +25,7 @@ function mediaFixture(){
  await page.route('https://cdn.jsdelivr.net/npm/livekit-client@**',route=>route.fulfill({contentType:'text/javascript',body:'('+mediaFixture.toString()+')();'}));
  await page.route('**/functions/v1/mafia',async route=>{const body=JSON.parse(route.request().postData());if(body.op==='catalog'){await route.fulfill({json:{roles:rules.ROLES,actions:rules.ACTION_LABELS,mediaConfigured:true}});return;}
   if(body.op==='create')state=rules.joinGame(rules.createGame('ABC234','p0','Host','media'),'p1','Guest');
-  await route.fulfill({json:{game:rules.publicView(state,'p0'),mediaConfigured:true,...(body.op==='media'?{connection:{url:'wss://test.livekit.cloud',token:'test-only',epoch:state.epoch,...(state.settings.cameraMode==='open'?{video:{url:'wss://test.livekit.cloud',token:'test-video',room:rules.mediaPolicy(state,'p0').videoRoom}}:{})}}:{})}});
+  await route.fulfill({json:{game:rules.publicView(state,'p0'),mediaConfigured:true,...(body.op==='media'?{connection:{url:'wss://test.livekit.cloud',token:'test-only',epoch:rules.mediaPolicy(state,'p0').epoch,...(state.settings.cameraMode==='open'?{video:{url:'wss://test.livekit.cloud',token:'test-video',room:rules.mediaPolicy(state,'p0').videoRoom}}:{})}}:{})}});
  });
  try{
   await page.goto(`http://127.0.0.1:${server.address().port}/mafia/index.html`);await page.waitForSelector('#playerName');await page.locator('#playerName').fill('Host');await page.getByRole('button',{name:'Создать комнату',exact:true}).click();

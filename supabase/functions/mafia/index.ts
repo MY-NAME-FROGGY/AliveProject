@@ -48,7 +48,7 @@ async function processRoom(code:string,uid:string|null,op:string,body:any={}){
   const strictCameras=s.settings.strictCameraCheck!==false;
   const cachedReady=strictCameras&&op==='ready'&&readyAllowed&&body.ready&&cameraFresh(player,now);
   const cachedStart=strictCameras&&op==='start'&&rosterReady&&s.players.every((p:any)=>cameraFresh(p,now));
-  const needCameras=strictCameras&&media.configured&&(op==='act'||op==='resume'||op==='tick'||(op==='ready'&&readyAllowed&&body.ready&&!cachedReady)||(op==='start'&&rosterReady&&!cachedStart));
+  const needCameras=strictCameras&&media.configured&&(op==='resume'||op==='tick'||(op==='ready'&&readyAllowed&&body.ready&&!cachedReady)||(op==='start'&&rosterReady&&!cachedStart));
   if(cachedReady)cameras[uid!]=true;
   if(cachedStart)for(const p of s.players)cameras[p.id]=true;
   if(needCameras){cameras=await media.cameras(s);for(const p of s.players)if(cameras[p.id])p.cameraVerifiedAt=now;}
@@ -64,7 +64,7 @@ async function processRoom(code:string,uid:string|null,op:string,body:any={}){
   else if(op==='settings')s=changeLobby(s,uid,'settings',body.settings);
   else if(op==='ready')s=changeLobby(s,uid,'ready',{ready:body.ready},!strictCameras||!body.ready||!!cameras[uid!]);
   else if(op==='start'){if(strictCameras&&!media.configured)throw Error('Сначала подключите LiveKit Cloud');s=startGame(s,uid,cameras,Date.now(),secureRandom);}
-  else if(op==='act'){if(body.epoch!==undefined&&body.epoch!==s.epoch)throw Error('Пробуждение уже изменилось. Обновите выбор.');if(strictCameras&&(!media.configured||!cameras[uid!]))throw Error('Для участия нужна подключённая камера');s=act(s,uid,body.kind,body.targets||[]);}
+  else if(op==='act'){if(body.epoch!==undefined&&body.epoch!==s.epoch)throw Error('Пробуждение уже изменилось. Обновите выбор.');if(strictCameras&&(!media.configured||!await media.camera(s,uid!)))throw Error('Для участия нужна подключённая камера');s=act(s,uid,body.kind,body.targets||[]);}
   else if(op==='pause')s=pause(s,uid,true);
   else if(op==='resume'){if(strictCameras&&s.players.some((p:any)=>p.alive&&!cameras[p.id]))throw Error('Дождитесь подключения камер всех живых игроков');s=pause(s,uid,false);}
    else if(op==='leave')s=changeLobby(s,uid,'leave');
@@ -75,7 +75,7 @@ async function processRoom(code:string,uid:string|null,op:string,body:any={}){
      const missing=strictCameras&&(!media.configured||s.players.some((p:any)=>p.alive&&!cameras[p.id]));
      if(missing&&Date.now()>s.cameraGraceUntil&&!s.paused){s.remaining=Math.max(5000,s.deadline-Date.now());s.paused=true;s.pauseReason='Ожидаем подключения камер';s.cameraPaused=true;}
     if(!missing&&s.cameraPaused){s.deadline=Date.now()+s.remaining;s.paused=false;delete s.pauseReason;delete s.cameraPaused;}
-     if(s.settings.gameMode!=='hosted'||s.phase==='night_pause')s=advance(s,Date.now(),secureRandom);
+     if(s.settings.gameMode!=='hosted'||s.phase==='night_pause'||s.nightStartsAt)s=advance(s,Date.now(),secureRandom);
    }
   }else if(!['state','media'].includes(op))throw Error('Неизвестная команда');
   // Privacy barrier: old media credentials are revoked before a new phase is visible.

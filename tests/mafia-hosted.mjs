@@ -1,5 +1,6 @@
+import {advance as finishPreparation} from '../supabase/functions/mafia/engine.mjs';
 import assert from 'node:assert/strict';
-import {createGame,joinGame,changeLobby,startGame,act,control,moderate,publicView,mediaPolicy,DEFAULTS} from '../supabase/functions/mafia/engine.mjs';
+import {createGame,joinGame,changeLobby,startGame as rawStartGame,act,control,moderate,publicView,mediaPolicy,DEFAULTS} from '../supabase/functions/mafia/engine.mjs';
 
 function lobby(){let s=createGame('HOST24','host','Ведущий','media',0);for(let i=1;i<=5;i++)s=joinGame(s,'p'+i,'Игрок '+i);s=changeLobby(s,'host','settings',{...DEFAULTS,gameMode:'hosted',counts:{mafia:1,doctor:1,sheriff:1}});for(const p of s.players.filter(p=>p.id!=='host'))s=changeLobby(s,p.id,'ready',{ready:true},true);return s;}
 const cameras=Object.fromEntries(['host','p1','p2','p3','p4','p5'].map(id=>[id,true]));
@@ -27,3 +28,5 @@ assert.throws(()=>moderate(s,'host','eliminate','host',null,7),/ведущему
 
 let auto=createGame('AUTO24','a0','Создатель','media',0);for(let i=1;i<5;i++)auto=joinGame(auto,'a'+i,'Авто '+i);auto.players.forEach(p=>p.ready=true);auto=startGame(auto,'a0',Object.fromEntries(auto.players.map(p=>[p.id,true])),1,()=>.4);assert.notEqual(auto.players.find(p=>p.id==='a0').role,null);assert.equal(publicView(auto,'a0').me.moderator,false);const ownerPanel=publicView(auto,'a0').hostPanel;assert.equal(ownerPanel.fullAccess,false);assert.ok(ownerPanel.players.every(p=>!Object.hasOwn(p,'role')&&!Object.hasOwn(p,'action')));assert.throws(()=>moderate(auto,'a0','role','a1','doctor',2),/отдельным ведущим/);auto=moderate(auto,'a0','eliminate','a1',null,2);assert.equal(auto.players.find(p=>p.id==='a1').alive,false);auto=moderate(auto,'a0','revive','a1',null,3);assert.equal(auto.players.find(p=>p.id==='a1').alive,true);auto.phase='finished';auto.winner={side:'town',ids:['a0'],text:'Тест'};auto.players.find(p=>p.id==='a1').alive=false;auto=moderate(auto,'a0','revive','a1',null,4);assert.equal(auto.phase,'result');assert.equal(auto.winner,undefined);
 console.log('Hosted mode passed: separate moderator, five-player deck, private master panel, manual phases, media isolation, role correction, eliminate/revive, automatic-mode compatibility.');
+
+function startGame(...args){const s=rawStartGame(...args);return finishPreparation(s,s.nightStartsAt);}

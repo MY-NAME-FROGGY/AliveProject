@@ -24,7 +24,7 @@ const {chromium}=require('playwright');
   await page.getByRole('button',{name:'Начать партию',exact:true}).click();await page.waitForSelector('.host-master .master-player');
   assert.equal(await page.locator('.host-master .master-player').count(),5);assert.match(await page.locator('#myRole').innerText(),/Ведущий/);assert.match(await page.locator('#actions').innerText(),/мастер-панели/);
   assert.ok(await page.locator('.host-master').getAttribute('open')!==null);assert.equal(await page.locator('.host-master select').count(),5);
-  const doctor=state.players.find(p=>p.role==='doctor'),target=state.players.find(p=>p.role==='citizen');state=rules.act(state,doctor.id,'heal',[target.id],Date.now());await page.waitForFunction(name=>document.querySelector('.host-master').textContent.includes('Лечить → '+name),target.name);
+  state=rules.advance(state,state.nightStartsAt);const doctor=state.players.find(p=>p.role==='doctor'),target=state.players.find(p=>p.role==='citizen');state=rules.act(state,doctor.id,'heal',[target.id],Date.now());await page.waitForFunction(name=>document.querySelector('.host-master').textContent.includes('Лечить → '+name),target.name);
   await page.screenshot({path:path.join(root,'preview-mafia-hosted.png'),fullPage:true});
   page.once('dialog',d=>d.accept());await page.getByRole('button',{name:'Следующий этап',exact:true}).click();await page.waitForFunction(()=>document.querySelector('#wakeNotice strong').textContent.includes('Тихая пауза'));
    const correctedId=state.players.find(p=>p.role==='mafia').id,card=page.locator(`.master-player select[onchange*="${correctedId}"]`).locator('..');

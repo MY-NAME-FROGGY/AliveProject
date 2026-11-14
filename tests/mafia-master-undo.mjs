@@ -1,5 +1,6 @@
+import {advance as finishPreparation} from '../supabase/functions/mafia/engine.mjs';
 import assert from 'node:assert/strict';
-import {createGame,joinGame,changeLobby,startGame,act,control,moderate,undoHost,liveSettings,announce,publicView,mediaPolicy,advance,DEFAULTS} from '../supabase/functions/mafia/engine.mjs';
+import {createGame,joinGame,changeLobby,startGame as rawStartGame,act,control,moderate,undoHost,liveSettings,announce,publicView,mediaPolicy,advance,DEFAULTS} from '../supabase/functions/mafia/engine.mjs';
 
 let s=createGame('MASTER','host','Ведущий','media',0);
 for(let i=1;i<=5;i++)s=joinGame(s,'p'+i,'Игрок '+i);
@@ -60,3 +61,5 @@ undoId=s.undo.eventId;
 s=advance(s,21000,()=>0);
 assert.throws(()=>undoHost(s,'host',undoId,21001),/нельзя отменить/);
 console.log('Mafia master controls, privacy and conditional undo passed.');
+
+function startGame(...args){const s=rawStartGame(...args);return finishPreparation(s,s.nightStartsAt);}

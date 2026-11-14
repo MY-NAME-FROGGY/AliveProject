@@ -1,5 +1,6 @@
+import {advance as finishPreparation} from '../supabase/functions/mafia/engine.mjs';
 import assert from 'node:assert/strict';
-import {createGame,joinGame,startGame,act,advance,publicView,control,changeLobby,DEFAULTS,mediaPolicy} from '../supabase/functions/mafia/engine.mjs';
+import {createGame,joinGame,startGame as rawStartGame,act,advance,publicView,control,changeLobby,DEFAULTS,mediaPolicy} from '../supabase/functions/mafia/engine.mjs';
 
 function game({hosted=false,open=false}={}){
  let s=createGame('NOM123','host','Ведущий','media',0);
@@ -56,3 +57,5 @@ manual=control(manual,'host','voting',manual.epoch,null,13);
 assert.ok(['voting','result'].includes(manual.phase));
 
 console.log('Nomination phase passed: timed personal turns, nominate/skip, candidate-only voting, no-candidate skip, host controls and all four mode combinations.');
+
+function startGame(...args){const s=rawStartGame(...args);return finishPreparation(s,s.nightStartsAt);}

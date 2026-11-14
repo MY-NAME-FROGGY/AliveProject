@@ -9,7 +9,7 @@ const {chromium}=require('playwright');
  await page.route('https://cdn.jsdelivr.net/npm/@supabase/**',route=>route.fulfill({contentType:'text/javascript',body:`window.supabase={createClient:()=>({auth:{getSession:async()=>({data:{session:{access_token:'test-session',user:{id:'p0'}}}})}})};`}));
  await page.route('https://cdn.jsdelivr.net/npm/livekit-client@**',route=>route.fulfill({contentType:'text/javascript',body:'window.LivekitClient={};'}));
  await page.addInitScript(()=>{if(!navigator.mediaDevices)Object.defineProperty(navigator,'mediaDevices',{configurable:true,value:{}});Object.defineProperty(navigator.mediaDevices,'getUserMedia',{configurable:true,value:async()=>new MediaStream()});});
- await page.route('**/functions/v1/mafia',async route=>{const body=JSON.parse(route.request().postData());calls.push(body);let result;
+ await page.route('**/functions/v1/mafia',async route=>{const body=JSON.parse(route.request().postData());if(state?.nightStartsAt&&Date.now()>=state.nightStartsAt)state=rules.advance(state,Date.now());calls.push(body);let result;
   if(body.op==='catalog')result={roles:rules.ROLES,actions:rules.ACTION_LABELS,mediaConfigured:false};
   else if(body.op==='create'){state=rules.createGame('ABC234','p0',body.name,'media');for(let i=1;i<8;i++)state=rules.joinGame(state,'p'+i,['','Олександр','Марія','Ірина','Тарас','Олена','Микола','Софія'][i]);result={game:rules.publicView(state,'p0'),mediaConfigured:false};}
   else if(body.op==='settings'){state=rules.changeLobby(state,'p0','settings',body.settings);result={game:rules.publicView(state,'p0')};}
