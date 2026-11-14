@@ -1,5 +1,4 @@
-// Diagnostic probes for the unmodified September release. These assert observed
-// defects, not desired behavior. Remove/convert assertions when defects are fixed.
+// Regressions for the defects reproduced in the November audit.
 import assert from 'node:assert/strict';
 import {createGame,joinGame,startGame,act,advance,publicView,moderate,DEFAULTS} from '../supabase/functions/mafia/engine.mjs';
 let s=createGame('ABC234','p0','Owner','media');
@@ -8,7 +7,7 @@ s.settings={...DEFAULTS,counts:{mafia:1,doctor:1,sheriff:1}};
 s.players.forEach(p=>p.ready=true);
 s=startGame(s,'p0',Object.fromEntries(s.players.map(p=>[p.id,true])),1000,()=>.7);
 assert.equal(s.phase,'night');
-assert.equal(s.nightStartsAt,6000);assert.equal(publicView(s,'p1').wake.key,'pause');assert.deepEqual(publicView(s,'p1').me.actions,[]);s=advance(s,6000);
+assert.equal(s.nightStartsAt,6000);assert.equal(publicView(s,'p1').deadline,6000);assert.equal(publicView(s,'p1').wake.key,'pause');assert.deepEqual(publicView(s,'p1').me.actions,[]);s=advance(s,6000);
 console.log('PASS server-owned initial preparation pause.');
 s.players.forEach((p,i)=>p.role=['citizen','mafia','doctor','sheriff','citizen','citizen'][i]);
 s.wakeOrder=['doctor','clan','sheriff'];s.wakeIndex=1;
