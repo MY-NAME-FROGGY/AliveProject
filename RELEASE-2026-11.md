@@ -1,5 +1,14 @@
 # November reliability and Bunker update
 
+Personal goals follow-up: 150 scenario-independent goals are stored in
+`content/general-goals.json`; apply `supabase/general-goals.sql` after the existing
+deal updates. New random deals default to one neutral goal per player. Explicit
+opt-out, preset goals and already dealt cards are preserved. Goals remain private
+to their owner and host, except the existing special peek mechanism. Completion
+is discussed at the final review; it does not automatically change the verdict.
+GOALS.md documents the content and installation. SQL probes cover privacy,
+late join/reconnection, opt-out and presets; all 90 route deals also include goals.
+
 Scenario alignment follow-up: nine narratives now agree with the six route
 catalogues and baseline equipment. SC08 is excluded on server and client;
 its text and original rules are unchanged. No historical data is deleted.

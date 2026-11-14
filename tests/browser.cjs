@@ -48,6 +48,10 @@ const fakeDB=()=>{
   assert.equal(await page.locator('#gameChatInput').inputValue(),'Черновик не должен исчезать');
   await page.evaluate(()=>{state.playerId=state.players[1].id;fixture.player_cards.push({id:990,room_code:'DEMO',player_id:state.playerId,category:'special_condition',text:'Обмен характеристиками',effect_key:'swap_trait',target_type:'one',revealed:false,used:false,slot:1});renderGameTable();});
   await page.waitForSelector('#myCardPanel li');
+  await page.evaluate(async()=>{fixture.player_cards.push({id:991,room_code:'DEMO',player_id:state.playerId,category:'goal',text:'Не просто пассажир — Войти в итоговый состав и объяснить свою задачу.',revealed:false,value:0,slot:1});await loadMyCard();});
+  assert.equal(await page.locator('#myCardPanel .personal-goal').count(),1);
+  assert.equal(await page.locator('#myCardPanel .personal-goal button').count(),0,'goals never offer a public reveal button');
+  assert.match(await page.locator('#myCardPanel .personal-goal').innerText(),/подведении итогов/);
   await page.screenshot({path:path.join(root,'preview-player.png'),fullPage:true});
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
   await page.evaluate(()=>{window.selection=AliveEffectsUI.pick({text:'Выбор'},[{id:'one',name:'Первый'},{id:'two',name:'Второй'}],2);});
@@ -64,6 +68,7 @@ const fakeDB=()=>{
   await page.setViewportSize({width:1440,height:900});
   await page.evaluate(()=>{state.playerId=state.room.host_id;state.room.phase='lobby';state.view='lobby';renderLobby();});
   await page.waitForSelector('#generationSettings');
+  assert.equal(await page.locator('[data-count-category="goal"]').inputValue(),'1','personal goal defaults to one');
   await page.screenshot({path:path.join(root,'preview-lobby.png'),fullPage:true});
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
   await page.evaluate(()=>actionSetOutlineColor('#ff0055'));

@@ -14,6 +14,8 @@ begin
     end loop;
     perform set_config('request.jwt.claim.sub',host_uid,true);
     perform public.alive_generate(test_code);
+    if (select count(*) from public.player_cards where room_code=test_code and category='goal')<>n then raise exception 'Expected one default goal per player %',scenario;end if;
+    if exists(select 1 from public.player_cards c join public.character_pool p on p.id=c.pool_id where c.room_code=test_code and c.category='goal' and (c.value<>0 or p.scenario_tag is not null)) then raise exception 'Scenario-specific or scored goal in general deal';end if;
     if scenario='SC08' then
      if exists(select 1 from alive_private.room_combos where room_code=test_code) then raise exception 'Author scenario received routes';end if;
      if public.alive_combo_status(test_code)<>'[]'::jsonb or public.alive_scenario_routes(scenario)<>'[]'::jsonb then raise exception 'Author scenario exposes route UI';end if;
@@ -77,5 +79,5 @@ begin
   end loop;
  end loop;
 end $$;
-select '90 deals passed: nine route scenarios + author exclusion, sizes 2/4/12, viable survivor capacity, six components, balance, privacy, medieval water and verdict guard' result;
+select '90 deals passed: one general goal per player, nine route scenarios + author exclusion, sizes 2/4/12, survivor capacity, balance, privacy, water and verdict guard' result;
 rollback;
