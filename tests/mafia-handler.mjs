@@ -62,8 +62,7 @@ assert.equal((await call('control','host',{code,command:'next',epoch:row.state.e
 assert.equal((await call('presence','outsider',{code,sound:true})).status,400);
 assert.equal((await call('presence','p1',{code,sound:true})).status,200);assert.equal(row.state.players.find(p=>p.id==='p1').soundState.enabled,true);
 assert.equal((await call('presence','p1',{code,sound:'yes'})).status,400);
-const previous=row.state.epoch;rejectRevocation=true;assert.equal((await call('control','host',{code,command:'next',epoch:previous})).status,400);assert.equal(row.state.epoch,previous);rejectRevocation=false;
-assert.equal((await call('control','host',{code,command:'next',epoch:previous})).status,200);assert.equal(row.state.epoch,previous+1);
+const previous=row.state.epoch;const connectionsBefore=providerCalls.length;assert.equal((await call('control','host',{code,command:'next',epoch:previous})).status,200);assert.equal(row.state.epoch,previous+1);assert.equal(providerCalls.length,connectionsBefore,'preparation ending must not reconnect unchanged private rooms');
 assert.equal((await call('act','p1',{code,kind:'check',targets:['host'],epoch:previous})).status,400);
 const openLobby=await call('create','owner2',{name:'Open host'}),openCode=openLobby.game.code;
 for(let i=1;i<5;i++)await call('join','o'+i,{code:openCode,name:'Open '+i});

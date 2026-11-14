@@ -1,5 +1,10 @@
 # November reliability and Bunker update
 
+Latest follow-up: scenario-routes-v2.sql adds six specific routes per scenario,
+two selected per game, explicit outcomes/limits and interchangeable components.
+Mafia media identity now follows participant permissions instead of game revisions.
+Full catalogue: SCENARIO-ROUTES.md. Apply v2 once after the initial migrations.
+
 ## Database
 
 Applied to alive-project on 2026-11-14. The historical Cron table was reduced

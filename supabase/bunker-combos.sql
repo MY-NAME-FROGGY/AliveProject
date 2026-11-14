@@ -101,7 +101,7 @@ alter function alive_private.deal_player(text,text) rename to deal_player_base;
 create function alive_private.deal_player(p_code text,p_target text) returns void
 language plpgsql security definer set search_path='' as $$
 begin
- if not alive_private.member(p_code) or (auth.uid()::text<>p_target and not alive_private.host(p_code)) then raise exception '??? ???????';end if;
+ if not alive_private.member(p_code) or (auth.uid()::text<>p_target and not alive_private.host(p_code)) then raise exception 'Access denied';end if;
  perform alive_private.deal_player_base(p_code,p_target);
  if exists(select 1 from public.rooms where code=p_code and card_mode<>'preset') then perform alive_private.balance_deal(p_code,p_target);end if;
 end $$;

@@ -5,3 +5,4 @@
 .host-control-page:not(.host-authorized) #hostToolsPanel{display:none!important}
 
 .host-control-page input[type=checkbox]{width:auto!important}.moderation-row strong small{margin-left:6px}.host-control-page label:has(>input[type=checkbox]){display:flex;align-items:center;gap:8px}
+.route-score.ready{border-color:#8cae73;color:#cee8b9}.route-score.incomplete{border-color:#c58b66;color:#f0c29d}.route-limit{padding:8px 10px;border-left:3px solid #b99758;background:#1a1f17}

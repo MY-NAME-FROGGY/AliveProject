@@ -283,8 +283,12 @@ export function mediaPolicy(s,id){const p=member(s,id);let group='table',audio=t
  else if(['night','night_pause','night_bonus'].includes(s.phase)){const clanWindow=!s.wakeOrder||s.phase==='night_bonus'||s.wakeOrder[s.wakeIndex]==='clan',together=!s.nightStartsAt&&s.phase!=='night_pause'&&nightGroup(p)&&clanWindow;group=together?'night-team':'private-'+p.id;audio=together;subscribe=together;}
  else if(p.silencedRound===s.round&&s.phase!=='finished')audio=false;
  if(p.hostMuted&&s.phase!=='finished')audio=false;
- const dayTable=['day','nomination','voting','result'].includes(s.phase),mediaEpoch=dayTable?'day-'+s.round:s.epoch;
- const videoRoom=s.settings.cameraMode==='open'?s.mediaId+'-cameras-'+(s.cameraGeneration||0):null;return {room:s.mediaId+'-'+mediaEpoch+'-'+group,identity:id,camera:!videoRoom,videoRoom,audio,subscribe,epoch:mediaEpoch};
+ // Game revisions are not media revisions. A timer edit or somebody else's
+ // awakening must not recreate this participant's unchanged connection.
+ const dayTable=['day','nomination','voting','result'].includes(s.phase),scope=dayTable?'day-'+s.round:['night','night_pause','night_bonus'].includes(s.phase)?'night-'+s.round:s.phase+'-'+s.round;
+ const videoRoom=s.settings.cameraMode==='open'?s.mediaId+'-cameras-'+(s.cameraGeneration||0):null;
+ const room=s.mediaId+'-'+scope+'-'+(s.cameraGeneration||0)+'-'+group;
+ return {room,identity:id,camera:!videoRoom,videoRoom,audio,subscribe,epoch:[room,!videoRoom,audio,subscribe,videoRoom||''].join('|')};
 }
 export function publicView(s,id){const p=member(s,id),night=['night','night_pause','night_bonus'].includes(s.phase);
  const moderator=isModerator(s,p),policy=mediaPolicy(s,id),peers=p.alive&&night&&policy.subscribe?s.players.filter(t=>(t.alive||isModerator(s,t))&&mediaPolicy(s,t.id).room===policy.room).map(t=>t.id):[];

@@ -26,7 +26,7 @@
  function observe(game,now=Date.now()){
   if(!game){stop();lastPhase=lastWake=lastWarning=null;lastMine=false;sleptAtPause=false;return;}
   if(game.paused){stop();return;}
-  const phase=[game.code,game.round,game.phase].join(':'),wake=phase+':'+game.epoch;
+  const phase=[game.code,game.round,game.phase].join(':'),wake=[phase,game.wake?.key||'',game.wake?.index??'',!!game.wake?.mine,game.nomination?.currentId||''].join(':');
   let enteredNight=false;if(phase!==lastPhase){const hadPhase=lastPhase!==null;lastPhase=phase;lastWake=null;lastWarning=null;lastMine=false;sleptAtPause=false;
    const panel=document.getElementById('soundSettings');if(game.phase!=='lobby'&&panel?.firstElementChild)panel.firstElementChild.open=false;
   if(game.phase==='night'&&(game.wake?.index===0||!game.wake)){enteredNight=true;play('sleep');}
