@@ -41,7 +41,8 @@ begin
     if exists(select 1 from alive_private.room_combos rc join alive_private.scenario_routes d on d.key=rc.route where rc.room_code=test_code and d.scenario_id<>scenario) then raise exception 'Foreign scenario route';end if;
     if exists(select 1 from public.player_cards c join alive_private.combo_catalog k on k.pool_id=c.pool_id where c.room_code=test_code and k.scenario_id is not null and k.scenario_id<>scenario) then raise exception 'Foreign component';end if;
     result:=public.alive_combo_status(test_code);
-    if exists(select 1 from jsonb_array_elements(result) x where (x->>'surviving')::int<>3 or x->>'outcome' is null or x->>'limitations' is null) then raise exception 'Completed route assessment failed';end if;
+    if exists(select 1 from jsonb_array_elements(result) x where (x->>'surviving')::int<>3) then raise exception 'Completed route assessment failed';end if;
+    if exists(select 1 from jsonb_array_elements(result) x where x ? 'outcome' or x ? 'threat' or x ? 'limitations') then raise exception 'Verbose route details returned';end if;
     if scenario='SC01' and n=2 and iteration=2 then
      update public.rooms set phase='game',current_phase='awaiting_verdict' where rooms.code=test_code;
      update public.rooms set current_phase='finished',verdict='victory' where rooms.code=test_code;
@@ -49,8 +50,8 @@ begin
     end if;
     if jsonb_array_length(result)<>2 then raise exception 'Invalid status';end if;
     perform set_config('request.jwt.claim.sub',md5(test_code||'2')::uuid::text,true);
-    if exists(select 1 from jsonb_array_elements(public.alive_combo_status(test_code)) x where x->>'surviving' is not null) then raise exception 'Private status exposed';end if;
-    if exists(select 1 from jsonb_path_query(public.alive_combo_status(test_code),'$[*].parts[*].cards[*]') x where x->>'player'<>'Test 2') then raise exception 'Hidden component owner exposed';end if;
+    if public.alive_combo_status(test_code)<>'[]'::jsonb or alive_private.alive_combo_status(test_code)<>'[]'::jsonb then raise exception 'Route status exposed to player';end if;
+    if public.alive_scenario_routes(scenario)<>'[]'::jsonb or alive_private.scenario_route_catalog(scenario)<>'[]'::jsonb then raise exception 'Route catalogue exposed to player';end if;
     perform set_config('request.jwt.claim.sub',host_uid,true);
     if n=12 and iteration=3 then
      update public.players p set is_alive=false where p.room_code=test_code and p.id<>host_uid and not exists(select 1 from public.player_cards c join alive_private.room_combos rc on rc.room_code=c.room_code and rc.pool_id=c.pool_id where c.room_code=test_code and c.player_id=p.id);

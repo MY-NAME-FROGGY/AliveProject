@@ -26,9 +26,15 @@ const fakeDB=()=>{
 
  await page.waitForSelector('body.host-authorized');await page.waitForSelector('#auditLog',{state:'attached'});
  const recipes=JSON.parse(fs.readFileSync(path.join(root,'content/scenario-routes.json'),'utf8')).SC01;
- await page.evaluate(rows=>{state.room.scenario_id='SC01';window.routeRows=rows.map((r,i)=>({key:'SC01_route_'+(i+1),title:r[0],threat:r[1],outcome:r[2],limitations:r[3]}));window.selectedRoutes=[routeRows[0],routeRows[3]].map(r=>({...r,required:3,surviving:3,parts:[1,2,3].map(part=>({part,cards:[{player:'Player',text:'Own visible component '+part,alive:true,usable:true}]}))}));const original=supabaseClient.rpc;supabaseClient.rpc=async(name,args)=>name==='alive_combo_status'?{data:selectedRoutes}:name==='alive_scenario_routes'?{data:routeRows}:original(name,args);},recipes);
+ await page.evaluate(rows=>{state.room.scenario_id='SC01';window.routeRpcCalls=[];window.routeRows=rows.map((r,i)=>({route:'SC01_route_'+(i+1),title:r[0],threat:r[1],outcome:r[2],limitations:r[3],texts:r.slice(4)}));window.selectedRoutes=[routeRows[0],routeRows[3]].map(r=>({...r,required:3,surviving:3,parts:r.texts.map((text,i)=>({part:i+1,cards:[{player:'Player',text,alive:true,usable:true}]}))}));const original=supabaseClient.rpc;supabaseClient.rpc=async(name,args)=>{if(['alive_combo_status','alive_scenario_routes'].includes(name)){routeRpcCalls.push(name);return {data:name==='alive_combo_status'?selectedRoutes:routeRows};}return original(name,args);};},recipes);
  await page.evaluate(()=>AliveExperience.refreshCombos(true));await page.evaluate(()=>AliveExperience.refreshCombos(true));
- assert.equal(await page.locator('#victoryRoutes .route-score.ready').count(),2);assert.equal(await page.locator('#victoryRoutes details article').count(),6);
+ assert.equal(await page.locator('#victoryRoutes .route-score.ready').count(),2);
+ assert.equal(await page.locator('#victoryRoutes article').count(),2,'only two compact summaries');
+ assert.equal(await page.locator('#victoryRoutes details[open]').count(),0,'card lists start collapsed');
+ assert.doesNotMatch(await page.locator('#victoryRoutes').innerText(),/Угроза:|Полный комплект|Ограничения:|шесть связок/);
+ assert.equal(await page.evaluate(()=>routeRpcCalls.includes('alive_scenario_routes')),false,'unused catalogue is not requested');
+ await page.locator('#victoryRoutes details').first().locator('summary').click();
+ assert.equal(await page.locator('#victoryRoutes details').first().locator('li').count(),3);
  const finals=()=>page.evaluate(()=>fixture.calls.filter(x=>x.table==='rooms'&&x.method==='update'&&x.args[0]?.current_phase==='finished').length);
  const before=await finals();await page.waitForTimeout(1700);assert.equal(await finals(),before,'complete routes never automatically finish the game');
  await page.screenshot({path:path.join(root,'preview-scenario-routes.png'),fullPage:true});
@@ -41,6 +47,16 @@ const fakeDB=()=>{
  await page.evaluate(()=>{state.room.card_mode='random';return AliveExperience.refreshCombos(true);});
  await page.evaluate(()=>AliveExperience.refreshCombos(true));
  assert.equal(await page.locator('#victoryRoutes .route-score').count(),2,'returning from an excluded mode reloads routes');
- assert.deepEqual(errors,[]);console.log('Scenario routes browser passed: catalogue, selected plans, limits, no auto victory, author/preset exclusion and mode switching.');
+ const calls=await page.evaluate(()=>routeRpcCalls.length);
+ await page.evaluate(()=>{state.playerId=state.players[1].id;renderGameTable();return AliveExperience.refreshCombos(true);});
+ assert.equal(await page.locator('#victoryRoutes').count(),0,'player never sees cached host data');
+ assert.equal(await page.evaluate(()=>routeRpcCalls.length),calls,'player does not request route data');
+ await page.evaluate(()=>{state.playerId=state.room.host_id;renderGameTable();return AliveExperience.refreshCombos(true);});
+ await page.evaluate(()=>AliveExperience.refreshCombos(true));
+ assert.equal(await page.locator('#victoryRoutes .route-score').count(),2);
+ await page.evaluate(()=>{const original=supabaseClient.rpc;supabaseClient.rpc=(name,args)=>name==='alive_combo_status'?new Promise(resolve=>window.finishRouteRequest=resolve):original(name,args);window.pendingRouteRequest=AliveExperience.refreshCombos(true);state.playerId=state.players[1].id;renderGameTable();});
+ await page.evaluate(()=>{finishRouteRequest({data:selectedRoutes});return pendingRouteRequest;});
+ assert.equal(await page.locator('#victoryRoutes').count(),0,'a late host response cannot appear after switching to player');
+ assert.deepEqual(errors,[]);console.log('Route UI passed: compact host summaries, collapsed cards, no catalogue, no player requests, no cached/late host leaks, author/preset exclusions.');
  }finally{await browser.close();await new Promise(r=>server.close(r));}
 })().catch(e=>{console.error(e);process.exitCode=1;});

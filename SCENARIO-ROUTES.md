@@ -1,5 +1,10 @@
 # Scenario-specific survival routes
 
+Route status and catalogue RPCs are restricted to the host. Players see their
+normal traits only. The host UI shows two compact summaries with collapsed card
+lists, not task instructions. Card wording comes from `content/route-card-texts.json`;
+apply `supabase/route-privacy-and-short-text.sql` last to update existing installations.
+
 Nine scenarios have six routes each. The server chooses two routes of three
 components for a new random game. Both routes fit within the survivor capacity
 at the initial deal. Components have two interchangeable variants.

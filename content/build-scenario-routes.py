@@ -22,8 +22,7 @@ for scenario,rows in recipes.items():
   for part,(cat,txt) in enumerate(zip(cats,parts),1):
    for variant in [1,2]:
     key=f'scenario_route_v2:{scenario}:{i}:{part}:{variant}'
-    tail=' Работаете по сверенной схеме; перед применением нужна проверка.' if variant==1 else ' Можете выполнить задачу медленнее с ручной проверкой каждого этапа.'
-    text=txt+'.'+tail
+    text=txt
     tag="'medieval_plague_queen_v1'" if scenario=='MEDIEVAL_PLAGUE_QUEEN' else 'null'
     sql+=f"with item as (insert into public.character_pool(content_key,category,text,value,scenario_tag,is_active) values({lit(key)},{lit(cat)},{lit(text)},{0 if part==2 else 1},{tag},true) returning id) insert into alive_private.combo_catalog(key,scenario_tag,route,title,part,category,pool_id,scenario_id) select {lit(key)},{tag},{lit(route)},{lit(title)},{part},{lit(cat)},id,{lit(scenario)} from item;\n"
 sql+='\n'+(root/'content/scenario-routes-functions.sql').read_text(encoding='utf8')

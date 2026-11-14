@@ -52,10 +52,10 @@ language plpgsql security definer set search_path='' as $$
 declare result jsonb;full_access boolean;
 begin
  if not alive_private.member(p_code) then raise exception 'Нет доступа';end if;
+ if not alive_private.host(p_code) then return '[]'::jsonb;end if;
  full_access:=alive_private.host(p_code);
  select coalesce(jsonb_agg(t),'[]') into result from (
   select rc.route,rc.title,count(*) required,
-   max(meta.threat) threat,max(meta.outcome) outcome,max(meta.limitations) limitations,
    case when full_access then count(*) filter(where exists(select 1 from public.player_cards c where c.room_code=p_code and c.pool_id=rc.pool_id and alive_private.combo_card_usable(c.id))) else null end surviving,
    jsonb_agg(jsonb_build_object('part',rc.part,'cards',(select coalesce(jsonb_agg(jsonb_build_object('player',p.name,'text',c.text,'alive',p.is_alive,'revealed',c.revealed,'usable',alive_private.combo_card_usable(c.id))),'[]') from public.player_cards c join public.players p on p.id=c.player_id where c.room_code=p_code and c.pool_id=rc.pool_id and (full_access or c.revealed or c.player_id=auth.uid()::text)))) parts
   from alive_private.room_combos rc left join alive_private.scenario_routes meta on meta.key=rc.route
@@ -68,6 +68,7 @@ create function alive_private.scenario_route_catalog(p_scenario text) returns js
 language plpgsql security definer set search_path='' as $$
 begin
  if auth.uid() is null then raise exception 'Сначала войдите';end if;
+ if not exists(select 1 from public.rooms r where r.scenario_id=p_scenario and r.card_mode<>'preset' and alive_private.host(r.code) and alive_private.member(r.code)) then return '[]'::jsonb;end if;
  return (select coalesce(jsonb_agg(t),'[]') from(select key,title,threat,outcome,limitations,group_no from alive_private.scenario_routes where scenario_id=p_scenario order by group_no,key)t);
 end $$;
 create function public.alive_scenario_routes(p_scenario text) returns jsonb

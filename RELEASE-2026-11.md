@@ -1,5 +1,13 @@
 # November reliability and Bunker update
 
+Route presentation correction: route status and catalogues are host-only at the
+database boundary. Players do not request or render them. The host sees two
+compact rows with card counts and collapsed card lists. No quest-like outcome,
+threat or limitation blocks are rendered. All 324 non-author route variants
+now use short bare traits without boilerplate about manual checks. Matching
+already dealt cards are updated in place; host-edited text and all other card
+state are preserved. Apply `supabase/route-privacy-and-short-text.sql` last.
+
 Personal goals follow-up: 150 scenario-independent goals are stored in
 `content/general-goals.json`; apply `supabase/general-goals.sql` after the existing
 deal updates. New random deals default to one neutral goal per player. Explicit

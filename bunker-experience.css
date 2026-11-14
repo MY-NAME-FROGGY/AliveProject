@@ -6,3 +6,4 @@
 
 .host-control-page input[type=checkbox]{width:auto!important}.moderation-row strong small{margin-left:6px}.host-control-page label:has(>input[type=checkbox]){display:flex;align-items:center;gap:8px}
 .route-score.ready{border-color:#8cae73;color:#cee8b9}.route-score.incomplete{border-color:#c58b66;color:#f0c29d}.route-limit{padding:8px 10px;border-left:3px solid #b99758;background:#1a1f17}
+.route-heading{display:flex;align-items:center;justify-content:space-between;gap:10px}.route-heading strong{min-width:0;font-size:14px}.route-heading .route-score{flex-shrink:0;margin:0;font-size:12px}.victory-route{padding:8px 0}.victory-route summary{cursor:pointer;font-size:12px;color:var(--muted,#a8ad92);margin-top:4px}.victory-route ul{margin:6px 0}.victory-route li b{display:inline}
