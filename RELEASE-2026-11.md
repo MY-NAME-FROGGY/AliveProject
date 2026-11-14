@@ -1,5 +1,12 @@
 # November reliability and Bunker update
 
+Scenario alignment follow-up: nine narratives now agree with the six route
+catalogues and baseline equipment. SC08 is excluded on server and client;
+its text and original rules are unchanged. No historical data is deleted.
+New medieval random deals receive max(8, 4 * planned survivors) litres once,
+capped by player count; existing manually set resources are preserved.
+Apply `supabase/scenario-alignment.sql` once after v2.
+
 Latest follow-up: scenario-routes-v2.sql adds six specific routes per scenario,
 two selected per game, explicit outcomes/limits and interchangeable components.
 Mafia media identity now follows participant permissions instead of game revisions.
@@ -59,9 +66,11 @@ history and keeps up to 500 recent failures; it never removes scheduled jobs.
 
 ## Validation
 
-90 rollback-only SQL deals across all ten scenarios, 2/4/12 players, unique
-cards, sum balance, six guaranteed components, private owners and verdict
-validation. Engine/media/handler/roles/nomination/moderation/signal tests and
+90 rollback-only SQL deals across nine route scenarios and the excluded author
+scenario, 2/4/12 players: unique cards, sum balance, six guaranteed components
+within survivor capacity, private owners, medieval water and verdict validation.
+Author exclusion and preset switching also pass in the browser.
+Engine/media/handler/roles/nomination/moderation/signal tests and
 desktop/mobile browser flows pass. Regression probes now assert that automatic
 retries stop, initial preparation blocks actions and hidden night actors stay
 hidden. Browser media uses a provider fixture; real multiplayer devices and

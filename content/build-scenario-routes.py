@@ -28,4 +28,4 @@ for scenario,rows in recipes.items():
     sql+=f"with item as (insert into public.character_pool(content_key,category,text,value,scenario_tag,is_active) values({lit(key)},{lit(cat)},{lit(text)},{0 if part==2 else 1},{tag},true) returning id) insert into alive_private.combo_catalog(key,scenario_tag,route,title,part,category,pool_id,scenario_id) select {lit(key)},{tag},{lit(route)},{lit(title)},{part},{lit(cat)},id,{lit(scenario)} from item;\n"
 sql+='\n'+(root/'content/scenario-routes-functions.sql').read_text(encoding='utf8')
 (root/'supabase/scenario-routes-v2.sql').write_text(sql,encoding='utf8')
-print(f'{len(recipes)} scenarios, 60 routes, 360 component variants')
+print(f'{len(recipes)} scenarios, {sum(map(len,recipes.values()))} routes, {sum(map(len,recipes.values()))*6} component variants')

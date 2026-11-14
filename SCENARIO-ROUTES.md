@@ -1,8 +1,18 @@
 # Scenario-specific survival routes
 
-Each of ten scenarios has six authored routes. The server selects one of the first three and one of the last three for a new random game (two routes, three components each). Components have two interchangeable variants. Existing games and presets are preserved.
+Nine scenarios have six routes each. The server chooses two routes of three
+components for a new random game. Both routes fit within the survivor capacity
+at the initial deal. Components have two interchangeable variants.
 
-A complete route makes its described plan available. Other threats, supplies, time and limitations remain relevant; there is no automatic overall victory. A host victory with a missing or blocked component requires a recorded alternative plan.
+SC08 (the author scenario) is excluded in every card mode: its original story,
+host notes and victory rules are preserved. Existing historical definitions are
+retained but never used by the feature. Preset games do not inject new routes.
+
+A complete route enables its described plan, not automatic victory. Supplies,
+time and explicit limitations still matter. The two selected routes identify the
+main tasks: do not demand a third unique undealt card as a hidden condition.
+Lost, changed or blocked cards can break a plan after the deal. A host may record
+an alternative plan. Apply `supabase/scenario-alignment.sql` once after v2.
 
 ## SC01
 
@@ -81,17 +91,6 @@ A complete route makes its described plan available. Other threats, supplies, ti
 | Еда в час света | Большинство культур погибло во тьме | Налажено ограниченное выращивание уцелевших культур | Нужны семена, вода и учёт короткого светового окна |
 | Не спутать галлюцинацию с маршрутом | Туман вызывает паранойю и потерю памяти | Участники проверяют ориентиры и состояние друг друга | Это не лечение отравления и не замена чистого воздуха |
 
-## SC08
-
-| Route | Threat | Outcome | Limitations |
-|---|---|---|---|
-| Генератор на год | Электросети уничтожены, от генератора зависит бункер | Критическое оборудование получает обслуживаемое питание | Топливо остаётся конечным; не восстанавливает мировую сеть |
-| Еда после шестого месяца | Запасов на полгода, жить внутри нужно год | Создан дополнительный цикл выращивания пищи | До первого урожая расходуются исходные запасы |
-| Связь вне сети Прометея | Неизвестно, остались ли доступные поселения | Установлен проверяемый канал связи с возможным укрытием | Контакт требует проверки; ответ не гарантирует безопасную эвакуацию |
-| Рацион без скрытого голода | Неверное распределение ускоряет истощение еды | Снижен расход и организована безопасная ротация пищи | Не удваивает запас еды и не заменяет новый источник питания |
-| Открыть закрытые помещения | Часть полезных помещений бункера недоступна | Безопасно обследовано и открыто одно закрытое помещение | Содержимое заранее неизвестно; силовое вскрытие может повредить оборудование |
-| Вентиляция без сюрпризов | Год в изоляции требует стабильного воздуха | Организовано регулярное обслуживание дыхательного контура | Нужны энергия и расходники; не разрешает жить при полной потере фильтрации |
-
 ## water_world
 
 | Route | Threat | Outcome | Limitations |
@@ -110,6 +109,7 @@ A complete route makes its described plan available. Other threats, supplies, ti
 | Лекарь в походе | Ранения и страх срывают путь к часовне | Отряд может оказать ограниченную помощь раненым | Не снимает магическую чуму и не исцеляет всё одним обрядом |
 | Разорвать цепь колокола | Чумная Королева связана с колоколом за запертой дверью | Подготовлен способ разомкнуть ослабленную цепь | Работа шумная и требует времени и защиты; зачарованный металл сначала нужно ослабить |
 | Защитить проводящего обряд | Ритуал сорвётся без защиты отряда | Организована оборона узкого прохода на время обряда | Не позволяет одному бойцу победить всё войско; нужны время и опора |
-| Вода до поля битвы | Чистой воды недостаточно на два дня пути | Найден и обработан запас воды по маршруту | Нужен учёт литров: ориентир 4 л на участника; кипячение не снимает магическую чуму |
+| Вода до поля битвы | Задержка или потеря бурдюка истощает походный запас | Подготовлено пополнение воды на случай задержки или потери части запаса | Нужен учёт литров: ориентир 4 л на участника; кипячение не снимает магическую чуму |
 | Дорога мимо Чёрных болот | Отряд рискует заблудиться и потратить время до третьего рассвета | Подготовлен обход опасных участков болота | Маршрут всё равно требует воды, времени и дозора |
 | Ослабить чумные чары | Без подготовки магия цепи сильнее обычного инструмента | Чары цепи ослаблены на время работы у колокола | Нужны близость к часовне и защита проводящего; это не победа над Королевой само по себе |
+

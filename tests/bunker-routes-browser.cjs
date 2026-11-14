@@ -33,6 +33,14 @@ const fakeDB=()=>{
  const before=await finals();await page.waitForTimeout(1700);assert.equal(await finals(),before,'complete routes never automatically finish the game');
  await page.screenshot({path:path.join(root,'preview-scenario-routes.png'),fullPage:true});
  await page.evaluate(()=>{selectedRoutes[0].surviving=2;selectedRoutes[0].parts[1].cards[0].usable=false;return AliveExperience.refreshCombos(true);});assert.equal(await page.locator('#victoryRoutes .route-score.incomplete').count(),1);
- assert.deepEqual(errors,[]);console.log('Scenario routes browser passed: six catalogue routes, two selected plans, explicit results/limits, blocked component and no automatic victory.');
+ await page.evaluate(()=>{state.room.scenario_id='SC08';return AliveExperience.refreshCombos(true);});
+ assert.equal(await page.locator('#victoryRoutes').isVisible(),false,'author scenario must not show injected routes, including cached data');
+ assert.equal(await page.locator('#victoryRoutes article').count(),0);
+ await page.evaluate(()=>{state.room.scenario_id='SC01';state.room.card_mode='preset';return AliveExperience.refreshCombos(true);});
+ assert.equal(await page.locator('#victoryRoutes').isVisible(),false,'presets preserve original rules');
+ await page.evaluate(()=>{state.room.card_mode='random';return AliveExperience.refreshCombos(true);});
+ await page.evaluate(()=>AliveExperience.refreshCombos(true));
+ assert.equal(await page.locator('#victoryRoutes .route-score').count(),2,'returning from an excluded mode reloads routes');
+ assert.deepEqual(errors,[]);console.log('Scenario routes browser passed: catalogue, selected plans, limits, no auto victory, author/preset exclusion and mode switching.');
  }finally{await browser.close();await new Promise(r=>server.close(r));}
 })().catch(e=>{console.error(e);process.exitCode=1;});
