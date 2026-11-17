@@ -1526,6 +1526,8 @@ function renderFinalPhaseTable() {
         <div class="panel" style="border-left:6px solid ${meta.color}; text-align:center;">
             <div style="font-size:14px; letter-spacing:0.08em; text-transform:uppercase; color:${meta.color};">${meta.icon} ${escapeHtml(meta.label)}</div>
             ${phaseBody}
+            <p id="finalStory" style="white-space:pre-line" hidden></p>
+            <section id="finalGoals" hidden></section>
             <div id="verdictControls">${renderVerdictControls(room, isHost)}</div>
         </div>
         <div class="panel">
@@ -2024,6 +2026,7 @@ async function updateGameDynamic() {
 
     const scenPanel = document.getElementById('scenarioPanelGame');
     if (scenPanel) scenPanel.style.display = room.scenario_visible ? 'block' : 'none';
+    refreshStoryAndGoals(room);
 
     await refreshRoomBunkerProperties();
     refreshBunkerList();
@@ -2216,7 +2219,8 @@ async function loadMyCard() {
 
         if (c.category === 'goal') {
             liClass = 'personal-goal';
-            extra = '<div class="muted-note" style="font-size:11px; margin-top:3px;">Личная цель не раскрывается обычным ходом. Выполнение обсуждается при подведении итогов.</div>';
+            const automatic = !!c.effect_params?.goal_kind;
+            extra = '<div class="muted-note">' + (automatic ? 'Итог определяется по состоянию карт и состава на момент вердикта.' : 'Личная цель обсуждается при подведении итогов.') + '</div>';
         } else if (isSpecial && !c.used) {
             // Спецусловия — карты-действия, а не информация «на раскрытие по расписанию»:
             // используются в любой момент игры, без привязки к фазе «Открытие», очереди хода
@@ -2478,10 +2482,16 @@ function renderScenarioPanelGameContent() {
     const { scenario, base, bonus } = state.gameScenario;
     const revealedIds = state.room.revealed_bonus_ids || [];
     const revealedBonus = (bonus || []).filter(b => revealedIds.includes(b.id));
+    const description = scenario.catastrophe_description || '';
+    const hasRoomEnding = state.room.card_mode !== 'preset' && state.room.scenario_id !== 'SC08';
+    const intro = hasRoomEnding ? description.split(/\r?\n\s*\r?\n/).slice(0, 2).join('\n\n') : description;
+    const supplies = hasRoomEnding && scenario.id === 'MEDIEVAL_PLAGUE_QUEEN'
+        ? '\n\nДо часовни два дня пути. На каждого спутника нужно четыре литра воды.' : '';
 
     el.innerHTML = `
         <h3>${escapeHtml(scenario.title)}</h3>
-        <p>${escapeHtml(scenario.catastrophe_description)}</p>
+        <p style="white-space:pre-line">${escapeHtml(intro + supplies)}</p>
+        <p id="roomScenarioStory" hidden></p>
         <h4 style="margin-top:10px;">Стартовые свойства</h4>
         <ul class="prop-list">${base.map(p => `<li><span class="prop-tag">База</span>${escapeHtml(p.text)}</li>`).join('')}</ul>
         ${revealedBonus.length ? `
@@ -2489,6 +2499,43 @@ function renderScenarioPanelGameContent() {
             <ul class="prop-list">${revealedBonus.map(p => `<li class="bonus"><span class="prop-tag">Бонус</span>${escapeHtml(p.text)}</li>`).join('')}</ul>
         ` : ''}
     `;
+    refreshStoryAndGoals(state.room);
+}
+
+function refreshStoryAndGoals(room) {
+    const code = room.code;
+    const host = room.host_id === state.playerId;
+    const finished = room.current_phase === 'finished';
+    const key = JSON.stringify([code, room.scenario_id, room.card_mode, room.scenario_visible, room.current_phase, room.verdict, state.playerId]);
+    function load(el, rpc, show) {
+        if (!el || el.dataset.request === key) return;
+        el.dataset.request = key;
+        const player = state.playerId;
+        supabaseClient.rpc(rpc, {p_code: code}).then(({data,error}) => {
+            if (!el.isConnected || el.dataset.request !== key || state.currentRoomCode !== code || state.playerId !== player) return;
+            if (error) throw error;
+            show(data, el);
+        }).catch(() => { if (el.dataset.request === key) delete el.dataset.request; });
+    }
+    const target = document.getElementById('roomScenarioStory') || document.getElementById('finalStory');
+    if (room.scenario_id !== 'SC08' && room.card_mode !== 'preset' && (host || room.scenario_visible)) {
+        load(target, 'alive_room_story', (story, el) => {
+            if (typeof story !== 'string' || !story) return;
+            el.textContent = story;
+            el.hidden = false;
+        });
+    } else if (target) {
+        delete target.dataset.request;
+        target.textContent = '';
+        target.hidden = true;
+    }
+    if (finished) load(document.getElementById('finalGoals'), 'alive_goal_results', (rows, el) => {
+        if (!Array.isArray(rows) || !rows.length) return;
+        el.innerHTML = '<h3>Личные цели</h3>' + rows.map(row =>
+            `<p><strong>${escapeHtml(row.name)} · ${row.met ? 'выполнена' : 'не выполнена'}</strong><br>${escapeHtml(row.text)}</p>`
+        ).join('');
+        el.hidden = false;
+    });
 }
 
 async function refreshBunkerResources() {

@@ -114,6 +114,20 @@ const fakeDB=()=>{
   await page.evaluate(()=>updateGameDynamic());
   assert.equal(await page.locator('#gamePlayersList').getByRole('button',{name:'Голосовать',exact:true}).count(),0,'resurrected player has no vote buttons this round');
   assert.equal(await page.evaluate(()=>state.voteBlocked),true);
+  await page.evaluate(()=>{
+   const original=supabaseClient.rpc;
+   supabaseClient.rpc=async(name,args)=>{
+    if(name==='alive_room_story')return {data:'На карте нарисован камыш.'};
+    if(name==='alive_goal_results')return {data:[{name:'Александра',text:'Сохрани хобби в тайне.',met:true}]};
+    return original(name,args);
+   };
+   state.room.scenario_id='MEDIEVAL_PLAGUE_QUEEN';state.room.scenario_visible=true;
+   state.room.current_phase='finished';state.room.verdict='victory';renderGameTable();
+  });
+  await page.waitForFunction(()=>document.querySelector('#finalStory')?.textContent.includes('камыш'));
+  assert.match(await page.locator('#finalGoals').innerText(),/Александра · выполнена/);
+  await page.evaluate(()=>{state.room.scenario_visible=false;refreshStoryAndGoals(state.room);});
+  assert.equal(await page.locator('#finalStory').isVisible(),false);
   assert.deepEqual(errors,[]);
   console.log('Browser checks passed: host/player/lobby/mobile, drafts, modals, reveal slots, outlines, medieval theme and restoration, resource units and asset versions.');
  }finally{await browser.close();await new Promise(r=>server.close(r));}
