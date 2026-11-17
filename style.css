@@ -115,7 +115,9 @@ textarea { resize: vertical; min-height: 80px; }
 .ptable-trait-cat{color:var(--hazard); font-weight:bold; font-size:10px; text-transform:uppercase;}
 .ptable-card-actions{display:flex; gap:4px; flex-wrap:wrap; margin-top:4px;}
 
-#myCardPanel{min-height:220px;}
+#myCardPanel{min-height:220px;flex:none;box-sizing:border-box;}
+.game-aside > #myCardPanel{height:auto;max-height:none;overflow:visible;box-shadow:none;}
+#roomScenarioStory p + p,#finalStory p + p{margin-top:.7em;}
 
 /* Строки карточки персонажа */
 .card-row{display:flex; justify-content:space-between; align-items:flex-start; padding:8px 10px; margin:3px 0; border-radius:6px; border-left:3px solid #555; background:rgba(0,0,0,0.2); gap:8px;}

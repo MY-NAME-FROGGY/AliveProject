@@ -1526,7 +1526,8 @@ function renderFinalPhaseTable() {
         <div class="panel" style="border-left:6px solid ${meta.color}; text-align:center;">
             <div style="font-size:14px; letter-spacing:0.08em; text-transform:uppercase; color:${meta.color};">${meta.icon} ${escapeHtml(meta.label)}</div>
             ${phaseBody}
-            <p id="finalStory" style="white-space:pre-line" hidden></p>
+            <div id="finalStory" hidden></div>
+            ${isHost && room.current_phase === 'awaiting_verdict' ? '<section id="finalRisks" hidden></section>' : ''}
             <section id="finalGoals" hidden></section>
             <div id="verdictControls">${renderVerdictControls(room, isHost)}</div>
         </div>
@@ -1855,7 +1856,7 @@ async function loadHostCardEditor(playerId) {
             </div>
             <textarea id="hostCardText_${c.id}" style="min-height:50px;">${escapeHtml(c.text || '')}</textarea>
             <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-                <label class="muted-note">Значение <input type="number" id="hostCardValue_${c.id}" value="${c.value ?? 0}" style="width:80px; display:inline-block;"></label>
+                <label class="muted-note">Значение <input type="number" min="-3" max="3" step="1" id="hostCardValue_${c.id}" value="${c.value ?? 0}" style="width:80px; display:inline-block;"></label>
                 <label class="muted-note"><input type="checkbox" id="hostCardRevealed_${c.id}" style="width:auto;" ${c.revealed ? 'checked' : ''}> раскрыто</label>
                 <label class="muted-note"><input type="checkbox" id="hostCardUsed_${c.id}" style="width:auto;" ${c.used ? 'checked' : ''}> использовано</label>
             </div>
@@ -1895,6 +1896,7 @@ async function actionHostSaveLiveSettings() {
 async function actionHostSaveCard(cardId, isSpecial) {
     const text = document.getElementById('hostCardText_' + cardId).value;
     const value = Number(document.getElementById('hostCardValue_' + cardId).value || 0);
+    if (!Number.isInteger(value) || value < -3 || value > 3) return alert('Укажите целое значение от −3 до +3.');
     const revealed = document.getElementById('hostCardRevealed_' + cardId).checked;
     const used = document.getElementById('hostCardUsed_' + cardId).checked;
     const patch = { text, value, revealed, used };
@@ -2485,13 +2487,10 @@ function renderScenarioPanelGameContent() {
     const description = scenario.catastrophe_description || '';
     const hasRoomEnding = state.room.card_mode !== 'preset' && state.room.scenario_id !== 'SC08';
     const intro = hasRoomEnding ? description.split(/\r?\n\s*\r?\n/).slice(0, 2).join('\n\n') : description;
-    const supplies = hasRoomEnding && scenario.id === 'MEDIEVAL_PLAGUE_QUEEN'
-        ? '\n\nДо часовни два дня пути. На каждого спутника нужно четыре литра воды.' : '';
 
     el.innerHTML = `
         <h3>${escapeHtml(scenario.title)}</h3>
-        <p style="white-space:pre-line">${escapeHtml(intro + supplies)}</p>
-        <p id="roomScenarioStory" hidden></p>
+        <div ${hasRoomEnding ? 'id="roomScenarioStory"' : ''}>${intro.split(/\r?\n\s*\r?\n/).map(p => `<p>${escapeHtml(p)}</p>`).join('')}</div>
         <h4 style="margin-top:10px;">Стартовые свойства</h4>
         <ul class="prop-list">${base.map(p => `<li><span class="prop-tag">База</span>${escapeHtml(p.text)}</li>`).join('')}</ul>
         ${revealedBonus.length ? `
@@ -2506,7 +2505,7 @@ function refreshStoryAndGoals(room) {
     const code = room.code;
     const host = room.host_id === state.playerId;
     const finished = room.current_phase === 'finished';
-    const key = JSON.stringify([code, room.scenario_id, room.card_mode, room.scenario_visible, room.current_phase, room.verdict, state.playerId]);
+    const key = JSON.stringify([code, room.scenario_id, room.card_mode, room.scenario_visible, room.current_phase, room.verdict, state.playerId, host]);
     function load(el, rpc, show) {
         if (!el || el.dataset.request === key) return;
         el.dataset.request = key;
@@ -2521,7 +2520,7 @@ function refreshStoryAndGoals(room) {
     if (room.scenario_id !== 'SC08' && room.card_mode !== 'preset' && (host || room.scenario_visible)) {
         load(target, 'alive_room_story', (story, el) => {
             if (typeof story !== 'string' || !story) return;
-            el.textContent = story;
+            el.innerHTML = story.split(/\r?\n\s*\r?\n/).map(p => `<p>${escapeHtml(p)}</p>`).join('');
             el.hidden = false;
         });
     } else if (target) {
@@ -2529,10 +2528,17 @@ function refreshStoryAndGoals(room) {
         target.textContent = '';
         target.hidden = true;
     }
+    if (host && ['SC01','SC07'].includes(room.scenario_id) && room.card_mode !== 'preset') {
+        load(document.getElementById('finalRisks'), 'alive_host_risks', (rows, el) => {
+            if (!Array.isArray(rows) || !rows.length) { el.hidden = true; return; }
+            el.innerHTML = '<h3>Угрозы оставшимся игрокам</h3>' + rows.map(row => `<p><strong>${escapeHtml(row.name)}</strong> · ${escapeHtml(row.reason)}</p>`).join('');
+            el.hidden = false;
+        });
+    }
     if (finished) load(document.getElementById('finalGoals'), 'alive_goal_results', (rows, el) => {
         if (!Array.isArray(rows) || !rows.length) return;
         el.innerHTML = '<h3>Личные цели</h3>' + rows.map(row =>
-            `<p><strong>${escapeHtml(row.name)} · ${row.met ? 'выполнена' : 'не выполнена'}</strong><br>${escapeHtml(row.text)}</p>`
+            `<p><strong>${escapeHtml(row.name)} · ${row.met ? (row.ruin ? 'личная победа' : 'выполнена') : 'не выполнена'}</strong><br>${escapeHtml(row.text)}</p>`
         ).join('');
         el.hidden = false;
     });

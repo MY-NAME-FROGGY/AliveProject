@@ -9,8 +9,8 @@ begin
  insert into public.players(id,room_code,name,seat_number) values(host_,code_,'Host',1),(a,code_,'Alice',2),(b,code_,'Bob',3);
  perform set_config('request.jwt.claim.sub',host_,true);
  perform public.alive_generate(code_);
- select string_agg(e.hints[i],' ' order by i) into expected from alive_private.story_endings e cross join generate_series(1,6) i
- where e.scenario_id='MEDIEVAL_PLAGUE_QUEEN' and exists(select 1 from alive_private.room_combos c where c.room_code=code_ and c.route=e.scenario_id||'_route_'||i);
+ select replace(e.opening,'{места}','2')||E'\n\n'||string_agg(e.skill_clues[i],E'\n\n' order by i)||E'\n\n'||e.closing into expected from alive_private.story_endings e cross join generate_series(1,6) i
+ where e.scenario_id='MEDIEVAL_PLAGUE_QUEEN' and exists(select 1 from alive_private.room_combos c where c.room_code=code_ and c.route=e.scenario_id||'_route_'||i) group by e.opening,e.closing;
  hint:=public.alive_room_story(code_);
  if hint is null or hint is distinct from expected then raise exception 'Story does not match selected routes'; end if;
  perform set_config('request.jwt.claim.sub',a,true);

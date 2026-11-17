@@ -102,8 +102,32 @@ const fakeDB=()=>{
   await page.screenshot({path:path.join(root,'preview-medieval-host.png'),fullPage:true});
   await page.evaluate(()=>{state.playerId=state.players[1].id;renderGameTable();});
   await page.waitForSelector('#myCardPanel li');
+  await page.evaluate(()=>{
+   const original=supabaseClient.rpc;
+   supabaseClient.rpc=(name,args)=>name==='alive_room_story'
+    ? Promise.resolve({data:'Король развернул письмо.\n\nРаненый гонец один знает обратный путь.\n\nКолокол отзывается на старые чары.'})
+    : original(name,args);
+   renderScenarioPanelGameContent();
+  });
+  await page.waitForFunction(()=>document.querySelector('#roomScenarioStory')?.textContent.includes('Раненый гонец'));
+  assert.equal(await page.locator('#roomScenarioStory > p').count(),3);
+  assert.equal(await page.locator('#scenarioPanelGame > p, #roomScenarioStory :is(aside,h4)').count(),0);
   await page.evaluate(()=>actionSetOutlineColor('#aa66ff'));
   assert.equal(await page.locator('#myCardPanel').evaluate(el=>getComputedStyle(el).borderTopColor),'rgb(170, 102, 255)');
+  for (const width of [1440, 950, 390]) {
+   await page.setViewportSize({width,height:844});
+   await page.evaluate(()=>{
+    const panel=document.querySelector('#myCardPanel');
+    panel.closest('.game-layout').dataset.mobileView='aside';
+    const list=panel.querySelector('ul');
+    while(list.children.length<18)list.append(list.firstElementChild.cloneNode(true));
+   });
+   assert.equal(await page.locator('#myCardPanel').evaluate(panel=>{
+    const last=panel.querySelector('li:last-child');
+    return panel.offsetWidth>0 && panel.getBoundingClientRect().bottom>=last.getBoundingClientRect().bottom
+     && ['Top','Right','Bottom','Left'].every(side=>getComputedStyle(panel)['border'+side+'Color']==='rgb(170, 102, 255)');
+   }),true,'the entire hand stays inside its outline at '+width);
+  }
   await page.setViewportSize({width:390,height:844});
   await page.screenshot({path:path.join(root,'preview-medieval-mobile.png'),fullPage:true});
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'medieval mobile fits');
@@ -117,7 +141,7 @@ const fakeDB=()=>{
   await page.evaluate(()=>{
    const original=supabaseClient.rpc;
    supabaseClient.rpc=async(name,args)=>{
-    if(name==='alive_room_story')return {data:'На карте нарисован камыш.'};
+    if(name==='alive_room_story')return {data:'На карте нарисован камыш.\n\n«Кто проведёт отряд через болото?»\n\n«Кто поможет раненому?»\n\nОтряд вернулся.'};
     if(name==='alive_goal_results')return {data:[{name:'Александра',text:'Сохрани хобби в тайне.',met:true}]};
     return original(name,args);
    };
@@ -125,6 +149,9 @@ const fakeDB=()=>{
    state.room.current_phase='finished';state.room.verdict='victory';renderGameTable();
   });
   await page.waitForFunction(()=>document.querySelector('#finalStory')?.textContent.includes('камыш'));
+  assert.equal(await page.locator('#finalStory > p').count(),4);
+  assert.equal(await page.locator('#finalStory aside, #finalStory h4').count(),0);
+  assert.equal(await page.locator('#finalStory > p:last-child').innerText(),'Отряд вернулся.');
   assert.match(await page.locator('#finalGoals').innerText(),/Александра · выполнена/);
   await page.evaluate(()=>{state.room.scenario_visible=false;refreshStoryAndGoals(state.room);});
   assert.equal(await page.locator('#finalStory').isVisible(),false);
