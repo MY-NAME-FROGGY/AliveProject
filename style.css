@@ -118,6 +118,10 @@ textarea { resize: vertical; min-height: 80px; }
 #myCardPanel{min-height:220px;flex:none;box-sizing:border-box;}
 .game-aside > #myCardPanel{height:auto;max-height:none;overflow:visible;box-shadow:none;}
 #roomScenarioStory p + p,#finalStory p + p{margin-top:.7em;}
+.deal-options{display:grid;grid-template-columns:auto 1fr;align-items:center;gap:8px 14px;}
+.deal-options h3{grid-column:1/-1;}
+.deal-options p{margin:0;}
+@media(max-width:620px){.deal-options{grid-template-columns:1fr;}.deal-options p{margin-bottom:6px;}}
 
 /* Строки карточки персонажа */
 .card-row{display:flex; justify-content:space-between; align-items:flex-start; padding:8px 10px; margin:3px 0; border-radius:6px; border-left:3px solid #555; background:rgba(0,0,0,0.2); gap:8px;}

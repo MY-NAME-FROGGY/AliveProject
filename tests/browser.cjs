@@ -74,6 +74,20 @@ const fakeDB=()=>{
   await page.evaluate(()=>actionSetOutlineColor('#ff0055'));
   assert.equal(await page.locator('.lobby-player-card').first().evaluate(el=>getComputedStyle(el).borderTopColor),'rgb(255, 0, 85)','host lobby outline updates immediately');
   const adventure=JSON.parse(fs.readFileSync(path.join(root,'content/medieval-plague-queen.json'),'utf8'));
+  for (const [id,hasPresets,hasRoutes] of [['water_world',true,true],['SC08',true,false],['MEDIEVAL_PLAGUE_QUEEN',false,true]]) {
+   await page.evaluate(({id,hasPresets,hasRoutes})=>{
+    state.view='scenarioDetail';
+    state.viewingScenario={scenario:{id,title:id,combo_enabled:hasRoutes},base:[],bonus:[]};
+    state.viewingPresets=hasPresets?[{label:'Герой'}]:[];
+    renderScenarioDetail();
+   },{id,hasPresets,hasRoutes});
+   const options=page.locator('.deal-options');
+   assert.equal(await options.getByRole('button',{name:'Случайная генерация',exact:true}).count(),1);
+   assert.equal(await options.getByRole('button',{name:'Прописанные персонажи',exact:true}).count(),Number(hasPresets));
+   assert.equal(await options.getByRole('button',{name:'Случайная генерация + связки',exact:true}).count(),Number(hasRoutes));
+   await options.getByRole('button',{name:'Случайная генерация',exact:true}).click();
+   assert.equal(await page.evaluate(()=>fixture.calls.filter(c=>c.table==='rooms'&&c.method==='update').at(-1).args[0].card_mode),'random_free');
+  }
   await page.evaluate(data=>{state.room.scenario_id=data.scenario.id;renderLobby();},adventure);
   await page.waitForFunction(()=>document.body.dataset.theme==='medieval');
   assert.equal(await page.locator('#adventurePoolNote').count(),0,'no catalog commentary under the scenario title');

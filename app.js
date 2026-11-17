@@ -373,7 +373,7 @@ async function dbFetchScenarios() {
 // которые видят все игроки. Подсказки ведущего грузятся отдельно, через
 // dbFetchHostNotes() — см. ниже.
 async function dbFetchScenarioDetail(id) {
-    const { data: scenario } = await supabaseClient.from('scenarios').select('id,title,catastrophe_description,has_presets').eq('id', id).maybeSingle();
+    const { data: scenario } = await supabaseClient.from('scenarios').select('id,title,catastrophe_description,has_presets,combo_enabled').eq('id', id).maybeSingle();
     const { data: props } = await supabaseClient.from('bunker_properties').select('id,scenario_id,type,text').eq('scenario_id', id);
     return {
         scenario,
@@ -887,6 +887,7 @@ function renderLobby() {
 
     state.lastSeenSettings = JSON.stringify(settings);
     state.lastSeenScenarioId = room.scenario_id;
+    state.lastSeenCardMode = room.card_mode;
     updateLobbyDynamic();
 }
 
@@ -1083,8 +1084,9 @@ function updateLobbyDynamic() {
             const settingsContent = document.getElementById('settingsContent');
             if (settingsContent) settingsContent.innerHTML = renderSettingsReadonly(room.settings || {});
         }
-        if (state.lastSeenScenarioId !== room.scenario_id) {
+        if (state.lastSeenScenarioId !== room.scenario_id || state.lastSeenCardMode !== room.card_mode) {
             state.lastSeenScenarioId = room.scenario_id;
+            state.lastSeenCardMode = room.card_mode;
             const summaryEl = document.getElementById('scenarioSummary');
             if (room.scenario_id) {
                 if (summaryEl) summaryEl.textContent = 'Загрузка...';
@@ -1190,10 +1192,23 @@ function syncGamePhaseTimerTicker() {
     }
 }
 
+function roomUsesRoutes(room, scenario = state.gameScenario?.scenario) {
+    if (!room?.scenario_id || room.scenario_id === 'SC08' || (room.card_mode ?? 'random') !== 'random') return false;
+    return scenario?.id !== room.scenario_id || scenario.combo_enabled !== false;
+}
+
+function scenarioIntroduction(scenario, randomDeal) {
+    const description = scenario.catastrophe_description || '';
+    if (!randomDeal || !scenario.combo_enabled || scenario.id === 'MEDIEVAL_PLAGUE_QUEEN') return description;
+    return description.split(/\r?\n\s*\r?\n/).slice(0, 2).join('\n\n');
+}
+
 async function loadScenarioSummary(id) {
     const { scenario } = await dbFetchScenarioDetail(id);
+    if (state.room?.scenario_id !== id) return;
     const el = document.getElementById('scenarioSummary');
-    const modeLabel = state.room?.card_mode === 'preset' ? ' (готовые карточки)' : ' (случайная генерация)';
+    const modeLabel = state.room.card_mode === 'preset' ? ' (прописанные персонажи)'
+        : roomUsesRoutes(state.room, scenario) ? ' (случайная генерация + связки)' : ' (случайная генерация)';
     if (el && scenario) el.textContent = scenario.title + modeLabel;
 }
 
@@ -1251,7 +1266,7 @@ function renderScenarioDetail() {
         <button class="btn btn-ghost" onclick="backToLobby()">← Назад в лобби</button>
         <div class="panel" style="margin-top:16px;">
             <h2>${escapeHtml(scenario.title)}</h2>
-            <p>${escapeHtml(scenario.catastrophe_description)}</p>
+            <p style="white-space:pre-line">${escapeHtml(scenarioIntroduction(scenario, true))}</p>
         </div>
         <div class="panel">
             <h3>Стартовые свойства бункера</h3>
@@ -1270,20 +1285,27 @@ function renderScenarioDetail() {
         ${presets.length > 0 ? `
             <div class="panel">
                 <h3>Готовые карточки персонажей (${presets.length} шт.)</h3>
-                <p class="muted-note">У этого сценария есть заранее написанные карточки. Если игроков больше, чем готовых карточек — остальным сгенерируются случайные.</p>
+                <p class="muted-note">Каждый получает прописанного персонажа. Если игроков больше, чем персонажей, включите повторы или выберите случайную раздачу.</p>
                 <ul class="prop-list">${presets.map(pr => `<li>${escapeHtml(pr.label)}</li>`).join('')}</ul>
             </div>
         ` : ''}
         ${isHost ? `
-            <button class="btn btn-primary" onclick="confirmScenario('${scenario.id}', 'random')">Выбрать этот сценарий (случайная генерация)</button>
-            ${presets.length > 0 ? `<button class="btn btn-primary" onclick="confirmScenario('${scenario.id}', 'preset')" style="margin-left:8px;">Выбрать с готовыми карточками</button>` : ''}
+            <section class="panel deal-options"><h3>Выберите раздачу</h3>
+                ${presets.length ? `<button class="btn" onclick="confirmScenario('${scenario.id}', 'preset')">Прописанные персонажи</button><p>Каждый получает готового героя из этого сценария.</p>` : ''}
+                <button class="btn" onclick="confirmScenario('${scenario.id}', 'random_free')">Случайная генерация</button><p>Характеристики выпадают из колоды. Группа сама придумывает план выживания.</p>
+                ${scenario.combo_enabled && scenario.id !== 'SC08' ? `<button class="btn btn-primary" onclick="confirmScenario('${scenario.id}', 'random')">Случайная генерация + связки</button><p>В раздаче есть карты для двух путей выживания. Рассказ подсказывает, какие умения искать.</p>` : ''}
+            </section>
         ` : ''}
     `;
 }
 
 async function confirmScenario(id, cardMode) {
-    await dbUpdateRoom(state.currentRoomCode, { scenario_id: id, card_mode: cardMode || 'random' });
-    backToLobby();
+    try {
+        await dbUpdateRoom(state.currentRoomCode, { scenario_id: id, card_mode: cardMode });
+        backToLobby();
+    } catch (error) {
+        alert(error.message || 'Не удалось сохранить режим раздачи.');
+    }
 }
 
 function backToLobby() {
@@ -2484,9 +2506,8 @@ function renderScenarioPanelGameContent() {
     const { scenario, base, bonus } = state.gameScenario;
     const revealedIds = state.room.revealed_bonus_ids || [];
     const revealedBonus = (bonus || []).filter(b => revealedIds.includes(b.id));
-    const description = scenario.catastrophe_description || '';
-    const hasRoomEnding = state.room.card_mode !== 'preset' && state.room.scenario_id !== 'SC08';
-    const intro = hasRoomEnding ? description.split(/\r?\n\s*\r?\n/).slice(0, 2).join('\n\n') : description;
+    const hasRoomEnding = roomUsesRoutes(state.room, scenario);
+    const intro = scenarioIntroduction(scenario, state.room.card_mode !== 'preset');
 
     el.innerHTML = `
         <h3>${escapeHtml(scenario.title)}</h3>
@@ -2517,7 +2538,7 @@ function refreshStoryAndGoals(room) {
         }).catch(() => { if (el.dataset.request === key) delete el.dataset.request; });
     }
     const target = document.getElementById('roomScenarioStory') || document.getElementById('finalStory');
-    if (room.scenario_id !== 'SC08' && room.card_mode !== 'preset' && (host || room.scenario_visible)) {
+    if (roomUsesRoutes(room) && (host || room.scenario_visible)) {
         load(target, 'alive_room_story', (story, el) => {
             if (typeof story !== 'string' || !story) return;
             el.innerHTML = story.split(/\r?\n\s*\r?\n/).map(p => `<p>${escapeHtml(p)}</p>`).join('');
