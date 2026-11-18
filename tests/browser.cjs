@@ -50,7 +50,7 @@ const fakeDB=()=>{
   await page.waitForSelector('#myCardPanel li');
   await page.evaluate(async()=>{fixture.player_cards.push({id:991,room_code:'DEMO',player_id:state.playerId,category:'goal',text:'Не просто пассажир — Войти в итоговый состав и объяснить свою задачу.',revealed:false,value:0,slot:1});await loadMyCard();});
   assert.equal(await page.locator('#myCardPanel .personal-goal').count(),1);
-  assert.equal(await page.locator('#myCardPanel .personal-goal button').count(),0,'goals never offer a public reveal button');
+  assert.equal(await page.locator('#myCardPanel .personal-goal button[onclick*="actionRevealTrait"]').count(),0,'goals never offer a public reveal button');
   assert.match(await page.locator('#myCardPanel .personal-goal').innerText(),/подведении итогов/);
   await page.screenshot({path:path.join(root,'preview-player.png'),fullPage:true});
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
@@ -156,7 +156,7 @@ const fakeDB=()=>{
    const original=supabaseClient.rpc;
    supabaseClient.rpc=async(name,args)=>{
     if(name==='alive_room_story')return {data:'На карте нарисован камыш.\n\n«Кто проведёт отряд через болото?»\n\n«Кто поможет раненому?»\n\nОтряд вернулся.'};
-    if(name==='alive_goal_results')return {data:[{name:'Александра',text:'Сохрани хобби в тайне.',met:true}]};
+    if(name==='alive_goal_review')return {data:[{name:'Александра',text:'Сохрани хобби в тайне.',met:true}]};
     return original(name,args);
    };
    state.room.scenario_id='MEDIEVAL_PLAGUE_QUEEN';state.room.scenario_visible=true;
@@ -169,6 +169,26 @@ const fakeDB=()=>{
   assert.match(await page.locator('#finalGoals').innerText(),/Александра · выполнена/);
   await page.evaluate(()=>{state.room.scenario_visible=false;refreshStoryAndGoals(state.room);});
   assert.equal(await page.locator('#finalStory').isVisible(),false);
+  await page.evaluate(()=>{
+   state.playerId=state.room.host_id; state.room.current_phase='awaiting_verdict';
+   const original=supabaseClient.rpc;
+   const row={id:91,seat:2,name:'Александра',text:'Согласуйте план.',met:null};
+   supabaseClient.rpc=async(name,args)=>{
+    if(name==='alive_goal_review')return {data:[row]};
+    if(name==='alive_mark_goal'){row.host_met=row.met=args.p_met;row.source='ведущий';return {data:null};}
+    if(name==='alive_review_export')return {data:{start:{players:[{},{}]},started_at:'2026-11-18',current:{round:2,phase:'awaiting_verdict',scenario:'Приключение',players:[{seat:2,name:'Александра',remaining:true}]}}};
+    return original(name,args);
+   };
+   renderGameTable();
+  });
+  await page.locator('#finalGoals').getByRole('button',{name:'Выполнено',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('#finalGoals strong')?.textContent.includes('выполнена'));
+  const downloaded=page.waitForEvent('download');
+  await page.getByRole('button',{name:'Скачать обзор партии (.txt)'}).click();
+  const report=await downloaded;
+  assert.match(report.suggestedFilename(),/bunker-round-2-.*\.txt$/);
+  assert.match(fs.readFileSync(await report.path(),'utf8'),/Просьба ведущего[\s\S]+Александра/);
+  assert.equal(await page.locator('#moderationTools .moderation-row').count(),6);
   assert.deepEqual(errors,[]);
   console.log('Browser checks passed: host/player/lobby/mobile, drafts, modals, reveal slots, outlines, medieval theme and restoration, resource units and asset versions.');
  }finally{await browser.close();await new Promise(r=>server.close(r));}

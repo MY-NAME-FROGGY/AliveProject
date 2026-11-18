@@ -118,6 +118,8 @@ textarea { resize: vertical; min-height: 80px; }
 #myCardPanel{min-height:220px;flex:none;box-sizing:border-box;}
 .game-aside > #myCardPanel{height:auto;max-height:none;overflow:visible;box-shadow:none;}
 #roomScenarioStory p + p,#finalStory p + p{margin-top:.7em;}
+.review-goal{text-align:start;border-top:1px solid var(--border);padding:8px 0;}
+.review-goal p{margin:4px 0;}.review-goal small{display:block;margin-bottom:4px;}
 .deal-options{display:grid;grid-template-columns:auto 1fr;align-items:center;gap:8px 14px;}
 .deal-options h3{grid-column:1/-1;}
 .deal-options p{margin:0;}

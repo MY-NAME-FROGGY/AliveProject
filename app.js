@@ -1416,7 +1416,7 @@ function renderGameTable() {
             <div style="font-size:14px; letter-spacing:0.08em; text-transform:uppercase; color:${meta.color};">${meta.icon} ${escapeHtml(meta.label)} · Раунд ${room.current_round || 1}</div>
             ${hasTimer ? `<div style="font-size:28px; font-weight:bold; margin-top:6px;" id="gamePhaseCountdown"></div>` : ''}
             ${phaseBody}
-            ${isHost ? renderHostPhaseControls(room, hasTimer) : ''}
+            ${isHost ? renderHostPhaseControls(room, hasTimer) + BunkerReview.exportButton : ''}
         </div>
         <div class="game-layout">
             <div class="game-sidebar">
@@ -1490,7 +1490,7 @@ function renderVerdictControls(room, isHost) {
                     </div>
                 </div>
                 <p class="muted-note" style="margin-top:6px;">Ваш черновой выбор виден игрокам живьём (но ни на что не влияет, пока вы не нажмёте «Огласить вердикт»).</p>
-                <button class="btn btn-danger" style="margin-top:12px; width:100%;" onclick="actionAnnounceVerdict()">ОГЛАСИТЬ ВЕРДИКТ</button>
+                <button class="btn btn-danger" ${room.verdict ? '' : 'disabled'} style="margin-top:12px; width:100%;" onclick="actionAnnounceVerdict()">ОГЛАСИТЬ ВЕРДИКТ</button>
             </div>
         `;
     }
@@ -1536,7 +1536,7 @@ function renderFinalPhaseTable() {
                         <span class="verdict-percent-text">${percent}% шанс выжить</span>
                     </div>` : ''}
                 <div class="survivors-list">
-                    <span class="survivors-label">Выжившие</span>
+                    <span class="survivors-label">Финальный состав</span>
                     <strong>${survivors.map(p => escapeHtml(p.name)).join(', ') || 'никто'}</strong>
                 </div>
             </div>`;
@@ -1548,9 +1548,12 @@ function renderFinalPhaseTable() {
         <div class="panel" style="border-left:6px solid ${meta.color}; text-align:center;">
             <div style="font-size:14px; letter-spacing:0.08em; text-transform:uppercase; color:${meta.color};">${meta.icon} ${escapeHtml(meta.label)}</div>
             ${phaseBody}
+            ${isHost ? BunkerReview.exportButton + '<p class="muted-note">Обзор включает закрытые карты и журнал ведущего. Приложите его к чату с ИИ для второго мнения.</p>' : ''}
             <div id="finalStory" hidden></div>
             ${isHost && room.current_phase === 'awaiting_verdict' ? '<section id="finalRisks" hidden></section>' : ''}
             <section id="finalGoals" hidden></section>
+            ${room.current_phase==='awaiting_verdict' ? '<div id="gamePhaseCountdown"></div>' : ''}
+            ${isHost && room.current_phase==='awaiting_verdict' ? renderHostPhaseControls(room,true)+'<details><summary>Исправить финальный состав</summary><div id="moderationTools"></div></details>' : ''}
             <div id="verdictControls">${renderVerdictControls(room, isHost)}</div>
         </div>
         <div class="panel">
@@ -1967,8 +1970,12 @@ async function updateGameDynamic() {
     if (!room) return;
     const isHost = room.host_id === state.playerId;
 
+    if (isHost && room.current_phase === 'awaiting_verdict') window.AliveGame?.refreshModeration?.();
     const verdictEl = document.getElementById('verdictControls');
-    if (verdictEl) verdictEl.innerHTML = renderVerdictControls(room, isHost);
+    if (verdictEl && !verdictEl.querySelector('input[type="number"]:focus,input[type="range"]:focus')) {
+        const html = renderVerdictControls(room, isHost);
+        if (verdictEl._markup !== html) { verdictEl.innerHTML = html; verdictEl._markup = html; }
+    }
 
     const nominees = room.nominees || [];
     const defenseIdx = room.defense_index || 0;
@@ -2243,8 +2250,7 @@ async function loadMyCard() {
 
         if (c.category === 'goal') {
             liClass = 'personal-goal';
-            const automatic = !!c.effect_params?.goal_kind;
-            extra = '<div class="muted-note">' + (automatic ? 'Итог определяется по состоянию карт и состава на момент вердикта.' : 'Личная цель обсуждается при подведении итогов.') + '</div>';
+            extra = '<div class="muted-note">Отметку увидит ведущий при подведении итогов.</div><div data-personal-goal="' + Number(c.id) + '"></div>';
         } else if (isSpecial && !c.used) {
             // Спецусловия — карты-действия, а не информация «на раскрытие по расписанию»:
             // используются в любой момент игры, без привязки к фазе «Открытие», очереди хода
@@ -2296,6 +2302,7 @@ async function loadMyCard() {
         <button class="btn btn-ghost btn-sm" style="margin-top:6px;" onclick="actionSaveNote(this)">Сохранить заметку</button>
         ${historyHtml ? `<details style="margin-top:14px;"><summary style="cursor:pointer; font-weight:bold; color:var(--hazard);">История ваших действий</summary><ul class="prop-list" style="margin-top:8px;">${historyHtml}</ul></details>` : ''}
     `;
+    BunkerReview.refresh();
 }
 
 function toggleTargetPicker(cardId) {
@@ -2525,7 +2532,6 @@ function renderScenarioPanelGameContent() {
 function refreshStoryAndGoals(room) {
     const code = room.code;
     const host = room.host_id === state.playerId;
-    const finished = room.current_phase === 'finished';
     const key = JSON.stringify([code, room.scenario_id, room.card_mode, room.scenario_visible, room.current_phase, room.verdict, state.playerId, host]);
     function load(el, rpc, show) {
         if (!el || el.dataset.request === key) return;
@@ -2556,13 +2562,7 @@ function refreshStoryAndGoals(room) {
             el.hidden = false;
         });
     }
-    if (finished) load(document.getElementById('finalGoals'), 'alive_goal_results', (rows, el) => {
-        if (!Array.isArray(rows) || !rows.length) return;
-        el.innerHTML = '<h3>Личные цели</h3>' + rows.map(row =>
-            `<p><strong>${escapeHtml(row.name)} · ${row.met ? (row.ruin ? 'личная победа' : 'выполнена') : 'не выполнена'}</strong><br>${escapeHtml(row.text)}</p>`
-        ).join('');
-        el.hidden = false;
-    });
+    BunkerReview.refresh();
 }
 
 async function refreshBunkerResources() {

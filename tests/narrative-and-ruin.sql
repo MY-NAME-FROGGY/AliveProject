@@ -39,14 +39,10 @@ begin
  update public.rooms set scenario_id='SC07',phase='game',current_phase='awaiting_verdict' where code=rc;
  update public.player_cards set value=0,pool_id=null where room_code=rc;
  update public.player_cards set effect_params='{"goal_kind":"survive"}' where room_code=rc and category='goal';
- perform alive_private.assign_ruin_goal(rc);
- if exists(select 1 from public.player_cards where room_code=rc and effect_params->>'goal_kind' like 'ruin_%') then raise exception 'Neutral hand became saboteur';end if;
  update public.player_cards c set text=p.text,value=p.value,pool_id=p.id from public.character_pool p
  where c.room_code=rc and c.player_id=a and c.category='phobia' and p.content_key='bunker_range:0:phobia:0' returning c.id into neg;
  update public.player_cards set value=2 where room_code=rc and player_id=a and category='hobby' returning id into pos;
- perform alive_private.assign_ruin_goal(rc);
- perform alive_private.assign_ruin_goal(rc);
- select id into strict g from public.player_cards where room_code=rc and player_id=a and effect_params->>'goal_kind' like 'ruin_%';
+ if exists(select 1 from public.player_cards where room_code=rc and effect_params->>'goal_kind' in ('ruin_bluff','ruin_vote')) then raise exception 'Retired goal was dealt';end if;
  if jsonb_array_length(public.alive_host_risks(rc))<>1 then raise exception 'Missing uncovered phobia';end if;
  perform set_config('request.jwt.claim.sub',b,true);
  if public.alive_host_risks(rc)<>'[]' then raise exception 'Exposed private risks';end if;
@@ -68,29 +64,7 @@ begin
  update public.player_cards c set text=p.text,value=p.value,pool_id=p.id from public.character_pool p
  where c.room_code=rc and c.player_id=a and c.category='luggage_small' and p.content_key='bunker_range:0:luggage_small:2';
  if public.alive_host_risks(rc)<>'[]' then raise exception 'Equipment did not protect';end if;
- update public.player_cards set revealed=(id=pos) where id in(pos,neg);
- update public.player_cards set effect_params=jsonb_build_object('goal_kind','ruin_bluff','show_id',pos,'hide_id',neg) where id=g;
  update public.rooms set current_phase='finished',verdict='victory' where code=rc;
- perform set_config('request.jwt.claim.sub',a,true);
- result:=public.alive_goal_results(rc)->0;
- if result->>'ruin'<>'true' or result->>'met'<>'false' then raise exception 'Sabotage on victory %',result;end if;
- perform set_config('request.jwt.claim.sub',h,true);
- update public.rooms set verdict='defeat' where code=rc;
- perform set_config('request.jwt.claim.sub',a,true);
- if public.alive_goal_results(rc)->0->>'met'<>'true' then raise exception 'Bluff not won';end if;
- perform set_config('request.jwt.claim.sub',h,true);
- update public.player_cards set revealed=true where id=neg;
- perform set_config('request.jwt.claim.sub',a,true);
- if public.alive_goal_results(rc)->0->>'met'<>'false' then raise exception 'Exposed bluff won';end if;
- perform set_config('request.jwt.claim.sub',h,true);
- update public.player_cards set effect_params='{"goal_kind":"ruin_vote"}' where id=g;
- insert into public.votes(room_code,round,voter_id,target_id) values(rc,1,a,b);
- perform set_config('request.jwt.claim.sub',a,true);
- if public.alive_goal_results(rc)->0->>'met'<>'false' then raise exception 'Vote against retained player won';end if;
- perform set_config('request.jwt.claim.sub',h,true);
- update public.players set is_alive=false where room_code=rc and id=b;
- perform set_config('request.jwt.claim.sub',a,true);
- if public.alive_goal_results(rc)->0->>'met'<>'true' then raise exception 'Vote sabotage not won';end if;
 end $$;
-select '135 story pairs, both recipients, weak-hand allocation, trait risks and personal wins passed' result;
+select '135 story pairs, both recipients and trait risks passed' result;
 rollback;
